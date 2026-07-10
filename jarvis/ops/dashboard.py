@@ -315,7 +315,9 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
   .tile b.money{color:var(--good)}
   .arch{width:100%;min-width:760px;height:auto;font-family:-apple-system,system-ui,sans-serif}
   .arch .container{fill:none;stroke:var(--line2);stroke-dasharray:5 4}
-  .arch .container.ops{stroke:var(--accent);opacity:.9}
+  /* LLM Ops is a SEPARATE system (offline, improves the agent) — a solid
+     tinted panel so it never reads as part of the ephemeral Harness. */
+  .arch .container.ops{fill:var(--accent-soft);opacity:.5;stroke:var(--accent);stroke-width:1.6;stroke-dasharray:none}
   .arch .bx{fill:var(--panel);stroke:var(--line);stroke-width:1}
   .arch .node{cursor:pointer}
   .arch .node:hover .bx{stroke:var(--accent);stroke-width:1.5}
@@ -497,7 +499,7 @@ function archSVG(d){
   const flow = (d2,cls="",id="") => `<path class="flow ${cls}" ${id?`id="${id}"`:""} d="${d2}"/>`;
   const flowLbl = (x,y,t,anchor="start") => `<text class="fl" x="${x}" y="${y}" text-anchor="${anchor}">${t}</text>`;
 
-  return `<div style="overflow-x:auto"><svg viewBox="0 0 1020 700" class="arch" role="img">
+  return `<div style="overflow-x:auto"><svg viewBox="0 0 1044 700" class="arch" role="img">
     <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0 0 L10 5 L0 10 z" class="head"/></marker></defs>
 
@@ -547,22 +549,24 @@ function archSVG(d){
     ${box(44,576,600,52,"Consolidation · every "+d.consolidate_every+" exchanges",d.chat_pending+"/"+d.consolidate_every*2+" queued → distilled into facts","memory","","consolidation")}
     ${flow("M340 576 L340 528","","e-consol-sem")}${flowLbl(350,560,"distill")}
 
-    <!-- LLM OPS: the outer loop — observes the run, then improves it -->
-    <rect class="container ops" x="700" y="20" width="308" height="392" rx="16"/>
-    ${lbl(720,48,"LLM OPS — the outer loop")}
-    <!-- every turn feeds the trace -->
-    <path class="flow" id="e-reply-trace" d="M660 100 C700 94 722 92 748 92" marker-end="url(#arr)"/>
-    ${flowLbl(700,80,"each turn")}
-    ${box(720,68,272,52,"Trace",s.trace_files+" file(s) · always on","ops","","trace")}
-    ${flow("M856 120 L856 138")}
-    ${box(720,138,272,52,"Eval","deterministic + judge","ops")}
-    ${flow("M856 190 L856 208")}
-    ${box(720,208,272,52,"Release gate",d.eval_report?"det "+d.eval_report.deterministic+" · judge "+d.eval_report.judge:"run make gate","ops")}
-    ${flow("M856 260 L856 278")}
-    ${box(720,278,272,52,"Release","new prompt · model · config","ops")}
+    <!-- LLM OPS: a SEPARATE system (offline). Detached with a clear gap so it
+         never reads as part of the ephemeral Harness — it improves the agent. -->
+    <rect class="container ops" x="736" y="20" width="292" height="392" rx="16"/>
+    ${lbl(756,44,"LLM OPS — separate system, offline")}
+    ${flowLbl(756,62,"observes the run · improves the agent",'start')}
+    <!-- every turn crosses the gap to feed the trace -->
+    <path class="flow" id="e-reply-trace" d="M660 102 C704 96 740 92 784 92" marker-end="url(#arr)"/>
+    ${flowLbl(694,84,"each turn")}
+    ${box(756,74,252,50,"Trace",s.trace_files+" file(s) · always on","ops","","trace")}
+    ${flow("M882 124 L882 140")}
+    ${box(756,140,252,50,"Eval","deterministic + judge","ops")}
+    ${flow("M882 190 L882 206")}
+    ${box(756,206,252,50,"Release gate",d.eval_report?"det "+d.eval_report.deterministic+" · judge "+d.eval_report.judge:"run make gate","ops")}
+    ${flow("M882 256 L882 272")}
+    ${box(756,272,252,50,"Release","new prompt · model · config","ops")}
     <!-- feedback: release improves the harness — the outer loop closes,
          routed under everything in open canvas so it crosses nothing -->
-    <path class="flow dash" d="M856 330 V672 H24 V100 H30" marker-end="url(#arr)"/>
+    <path class="flow dash" d="M882 322 V672 H24 V100 H30" marker-end="url(#arr)"/>
     ${flowLbl(430,666,"improved prompt + config",'middle')}
   </svg></div>`;
 }
