@@ -450,7 +450,7 @@ function archSVG(d){
   const flow = (d2,cls="") => `<path class="flow ${cls}" d="${d2}"/>`;
   const flowLbl = (x,y,t,anchor="start") => `<text class="fl" x="${x}" y="${y}" text-anchor="${anchor}">${t}</text>`;
 
-  return `<div style="overflow-x:auto"><svg viewBox="0 0 960 500" class="arch" role="img">
+  return `<div style="overflow-x:auto"><svg viewBox="0 0 960 552" class="arch" role="img">
     <defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0 0 L10 5 L0 10 z" class="head"/></marker></defs>
 
@@ -469,9 +469,14 @@ function archSVG(d){
     ${box(348,120,126,44,"Tools","create_event…","tools")}
     ${flow("M401 108 L401 120")}${flow("M421 120 L421 108")}
     ${flow("M308 90 L336 90")}
-    ${flow("M486 100 L520 100")}
+    ${flow("M486 100 L520 100")}${flowLbl(494,94,"reply")}
     ${box(520,76,104,48,"Reply","→ back to you","loop")}
+    <!-- reply loops back to the gateway (next turn) -->
     <path class="flow" d="M572 76 C572 40 320 40 88 62" marker-end="url(#arr)"/>
+    ${flowLbl(330,36,"next turn")}
+    <!-- every turn is saved for consolidation (right inner lane) -->
+    <path class="flow dash" d="M600 118 C620 128 622 150 622 200 L622 402" marker-end="url(#arr)"/>
+    ${flowLbl(628,300,"save chats")}
 
     <!-- retrieval gate feeding working memory (the hero) -->
     <path class="gate" d="M242 210 L318 244 L242 278 L166 244 Z"/>
@@ -490,9 +495,12 @@ function archSVG(d){
     ${box(28,414,582,50,"Consolidation · every "+d.consolidate_every+" exchanges",d.chat_pending+"/"+d.consolidate_every*2+" queued → distilled into facts","memory")}
     ${flow("M300 414 L300 386")}${flowLbl(310,404,"distill")}
 
-    <!-- LLM OPS: separate loop, its own vertical chain -->
-    <rect class="container ops" x="664" y="20" width="288" height="330" rx="14"/>
-    ${lbl(682,46,"LLM OPS — improves the agent")}
+    <!-- LLM OPS: the outer loop — observes the run, then improves it -->
+    <rect class="container ops" x="664" y="20" width="288" height="360" rx="14"/>
+    ${lbl(682,46,"LLM OPS — the outer loop")}
+    <!-- every turn feeds the trace -->
+    <path class="flow" d="M624 96 C650 90 662 84 682 82" marker-end="url(#arr)"/>
+    ${flowLbl(636,74,"each turn")}
     ${box(682,60,252,48,"Trace",s.trace_files+" file(s) · always on","ops")}
     ${flow("M808 108 L808 124")}
     ${box(682,124,252,48,"Eval","deterministic + judge","ops")}
@@ -500,7 +508,10 @@ function archSVG(d){
     ${box(682,188,252,48,"Release gate",d.eval_report?"det "+d.eval_report.deterministic+" · judge "+d.eval_report.judge:"run make gate","ops")}
     ${flow("M808 236 L808 252")}
     ${box(682,252,252,48,"Release","new prompt · model · config","ops")}
-    <text class="fl" x="682" y="326">↩ feeds an improved prompt + config back to the Harness</text>
+    <!-- feedback: release improves the harness — the outer loop closes,
+         routed under everything in open canvas so it crosses nothing -->
+    <path class="flow dash" d="M808 300 V524 H20 V90 H26" marker-end="url(#arr)"/>
+    ${flowLbl(414,518,"improved prompt + config",'middle')}
   </svg></div>`;
 }
 
