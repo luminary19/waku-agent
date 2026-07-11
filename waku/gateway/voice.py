@@ -89,6 +89,29 @@ def _best_say_voice() -> str:
     return english[0] if english else "Daniel"
 
 
+# Emoji and pictographs — a TTS engine reads these out loud ("rocket", "sparkles"),
+# which sounds ridiculous. Strip them (plus leftover markdown bullets) before speaking.
+_EMOJI = re.compile(
+    "[\U0001f300-\U0001faff"  # symbols, pictographs, emoticons, transport, supplemental
+    "\U00002600-\U000027bf"    # misc symbols + dingbats
+    "\U0001f1e6-\U0001f1ff"    # regional-indicator flag letters
+    "\U00002190-\U000021ff"    # arrows
+    "\U00002b00-\U00002bff"    # stars, misc symbols-and-arrows
+    "\U0000fe00-\U0000fe0f"    # variation selectors
+    "\U0000200d\U000020e3\U0000fe0f]+"  # ZWJ + keycap/variation joiners
+)
+
+
+def _speakable(text: str) -> str:
+    """What actually gets voiced: no emoji, no stray markdown markers, tidy spaces."""
+    if not text:
+        return ""
+    text = _EMOJI.sub("", text)
+    text = re.sub(r"[*_`#>]", "", text)      # markdown emphasis/heading/quote/code marks
+    text = re.sub(r"[ \t]{2,}", " ", text)   # collapse gaps left by removed glyphs
+    return "\n".join(ln.strip() for ln in text.splitlines()).strip()
+
+
 class Mouth:
     """TTS with a boring, reliable default (macOS `say`) and a neural upgrade
     (Kokoro-82M, Apache-2.0 — its bm_* voices are the proper British butler)."""
@@ -115,6 +138,7 @@ class Mouth:
             self.voice = _best_say_voice()  # auto-upgrade to a Premium/Enhanced voice
 
     def speak(self, text: str) -> None:
+        text = _speakable(text)
         if not text:
             return
         if self.engine == "kokoro":
