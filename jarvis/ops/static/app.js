@@ -38,7 +38,7 @@ async function saveSoul(){
 }
 async function saveSkill(i){
   const ta = document.getElementById("sk-"+i);
-  const r = await postJSON("/api/memory", {action:"save_skill", rel:ta.dataset.rel, content:ta.value});
+  const r = await postJSON("/api/memory", {action:"save_skill", path:ta.dataset.path, content:ta.value});
   document.getElementById("skmsg-"+i).textContent = r.error ? ("Error: "+r.error) : "Saved — live next turn.";
   if (!r.error){ const b=document.getElementById("sksave-"+i); if(b) b.disabled=true; editing=false; }
 }
@@ -396,11 +396,14 @@ function memOverview(d){
   ].map(([t,sub,n,desc]) => `<div class="box" style="min-width:0" onclick="location.hash='memory/${sub}'">
       <b>${t} <span class="meta" style="font-weight:400">· ${n}</span></b><span>${desc}</span></div>`).join("");
   return `<div class="card" style="border-color:var(--accent);background:var(--accent-soft)">
-      <b>Memory vs Data — two views of one file.</b>
+      <b>Memory vs Database — two views of one file.</b>
       <div class="r">This tab is the curated, per-pillar view of what Jarvis remembers. The
-      <a class="reveal" onclick="location.hash='database'">Data tab</a> shows the exact same
+      <a class="reveal" onclick="location.hash='database'">Database tab</a> shows the exact same
       thing as raw SQLite tables (plus the FTS5 keyword index). Same
-      <code>.jarvis/state.db</code> — different altitude.</div></div>
+      <code>.jarvis/state.db</code> — different altitude.
+      <br><br>Some assistants (Hermes) keep memory as a single <code>MEMORY.md</code> file. Here it's
+      structured rows in <code>state.db</code> (facts + episodes tables) instead — so it's queryable and
+      keyword-searchable (FTS5), not just a text blob. Same idea, sturdier storage.</div></div>
     <h2>The three pillars</h2>
     <div class="tiles" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">${pillars}</div>
     <h2>Retrieval gate — does this turn even need memory?</h2>${gateSplit(s)}
@@ -426,7 +429,7 @@ function memEpisodic(d){
     <b>Why is this small?</b> <span class="r">Episodic memory holds one <i>distilled</i> summary per
     consolidation, not every message. The raw, blow-by-blow conversation lives in the
     <a class="reveal" onclick="location.hash='database/chat_log'"><code>chat_log</code> table</a>
-    (the big one) on the Data tab — episodes are its highlights.</span></div>`;
+    (the big one) on the Database tab — episodes are its highlights.</span></div>`;
   h += `<div class="card" style="padding:4px 8px"><table><tr><th>date</th><th>episode</th><th></th></tr>${
     d.episodes.map(e => `<tr><td class="meta">${esc(e.happened_at)}</td><td>${esc(e.summary)}</td>
       <td><a class="reveal del" onclick="delMem('delete_episode',${e.id})">delete</a></td></tr>`).join("")}</table></div>`;
@@ -443,18 +446,13 @@ description: ${sk.description}
 ---
 
 ${sk.body}`;
-    if (sk.editable) return `<div class="card">
-      <div class="u"><code>${esc(sk.name)}</code> <span class="meta" style="font-weight:400">· ${esc(sk.description)}</span></div>
-      <textarea class="editor" id="sk-${i}" style="min-height:150px;margin-top:8px" data-rel="${esc(sk.rel)}"
-        oninput="dirty('sksave-${i}')" onfocus="markEditing()">${esc(full)}</textarea>
-      <div style="margin-top:8px"><button class="save" id="sksave-${i}" disabled onclick="saveSkill(${i})">Save SKILL.md</button>
-        <span class="meta" id="skmsg-${i}" style="margin-left:10px"></span></div></div>`;
     return `<div class="card">
       <div class="u"><code>${esc(sk.name)}</code> <span class="meta" style="font-weight:400">· ${esc(sk.description)}</span>
-        <span class="srcpill apple" style="margin-left:6px">built-in</span></div>
-      <div class="r">${esc(sk.body.slice(0,240))}${sk.body.length>240?"…":""}</div>
-      <div class="meta" style="margin-top:6px">read-only — lives in the repo at <code>${esc(sk.rel)}</code>. Copy it into
-        ${reveal("skills","your skills folder")} to make it editable.</div></div>`;
+        <span class="srcpill ${sk.editable?"":"apple"}" style="margin-left:6px">${sk.editable?"home":"built-in"}</span></div>
+      <textarea class="editor" id="sk-${i}" style="min-height:150px;margin-top:8px" data-path="${esc(sk.path)}"
+        oninput="dirty('sksave-${i}')" onfocus="markEditing()">${esc(full)}</textarea>
+      <div style="margin-top:8px"><button class="save" id="sksave-${i}" disabled onclick="saveSkill(${i})">Save SKILL.md</button>
+        <span class="meta" id="skmsg-${i}" style="margin-left:10px">${esc(sk.rel)}</span></div></div>`;
   }).join("") || `<div class="card empty">no skills loaded</div>`;
   return h;
 }
@@ -638,9 +636,10 @@ const VIEWS = {
     }
     const kb = (db.size/1024).toFixed(1);
     h += `<div class="card" style="border-color:var(--accent);background:var(--accent-soft)">
-      <b>Data vs Memory.</b> <span class="r">This is the raw persistence layer — the literal SQLite
+      <b>Database vs Memory.</b> <span class="r">This is the raw persistence layer — the literal SQLite
       tables. The <a class="reveal" onclick="location.hash='memory'">Memory tab</a> is the friendly
-      view of the same rows (facts, episodes, skills, persona). One file, two altitudes.</span></div>`;
+      view of the same rows (facts, episodes, skills, persona). One file, two altitudes. Where Hermes
+      uses a <code>MEMORY.md</code> file, Jarvis uses these queryable tables instead.</span></div>`;
     h += `<div class="card">
       <div class="u" style="font-family:var(--mono);font-size:12.5px;word-break:break-all">${esc(db.path)}</div>
       <div class="meta">${kb} KB on disk · SQLite + FTS5 · open it yourself: <code>sqlite3 .jarvis/state.db</code></div>
@@ -767,7 +766,7 @@ async function pollEvents(){
 
 let activeView = null, activeSub = null;
 const TITLES = {chat:"Chat & watch", ops:"LLM Ops",
-                database:"Data — everything Jarvis stores (state.db)"};
+                database:"Database — everything Jarvis stores (state.db)"};
 function render(){
   if (!D) return;
   const [v, subRaw] = (location.hash||"#overview").slice(1).split("/");

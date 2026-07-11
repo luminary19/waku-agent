@@ -544,18 +544,19 @@ def memory_action(payload: dict) -> dict:
         (settings.home / "SOUL.md").write_text(text + "\n")
         return {"ok": True}
     if action == "save_skill":
-        # Edit an existing home skill's SKILL.md by hand (same file the agent's
-        # create_skill writes). Validates frontmatter; only home skills are
-        # writable (built-in repo skills stay read-only).
+        # Edit any loaded SKILL.md by hand (same file the agent's create_skill
+        # writes) — repo skills and home skills alike. Sandboxed to the two
+        # skills folders; validates the frontmatter before writing.
+        from pathlib import Path
+
+        from jarvis.memory import REPO_SKILLS
         from jarvis.memory.procedural.loader import _parse_text
 
-        rel = (payload.get("rel") or "").strip()
         text = (payload.get("content") or "").strip()
-        if not rel or not rel.startswith("skills/") or ".." in rel:
-            return {"error": "can only edit skills under the home skills/ folder"}
-        dest = (settings.home / rel).resolve()
-        if settings.home.resolve() not in dest.parents:
-            return {"error": "path is outside the Jarvis home"}
+        dest = Path(payload.get("path") or "").resolve()
+        allowed = [REPO_SKILLS.resolve(), (settings.home / "skills").resolve()]
+        if dest.name != "SKILL.md" or not any(a in dest.parents for a in allowed):
+            return {"error": "can only edit SKILL.md files inside the skills folders"}
         if _parse_text(text, dest) is None:
             return {"error": "invalid SKILL.md — needs a name and description in the frontmatter"}
         dest.write_text(text.rstrip() + "\n")

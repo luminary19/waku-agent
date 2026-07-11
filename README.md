@@ -71,7 +71,27 @@ And versus the big open-source assistants (OpenClaw, Hermes)? Same architecture,
 
 ## The whiteboard maps to the code
 
-Every box on the architecture diagram is one module ([diagram](docs/architecture.md)):
+This diagram renders straight from the README (it's [Mermaid](https://mermaid.js.org/) text, not an
+image — edit it in a PR):
+
+```mermaid
+flowchart LR
+  GW["Gateway<br/>cli · telegram · voice · dashboard"] --> WM["Working memory<br/>SOUL.md + memory + history"]
+  WM --> LLM
+  subgraph LOOP["The Loop — loop/agent.py"]
+    LLM["LLM"] -->|tool call| TOOLS["Tools<br/>create_event · list_events<br/>search_web · save_note · …"]
+    TOOLS -->|result| LLM
+  end
+  LLM -->|reply| REPLY["Reply"] --> GW
+  GATE{{"Retrieval gate<br/>does this turn need memory?"}} -. only if needed .-> WM
+  MEM[("Memory — state.db<br/>SQLite + FTS5<br/>semantic · episodic · procedural")] --> GATE
+  REPLY -. save chat .-> MEM
+  MEM -->|every N chats| CONS["Consolidate → facts"] --> MEM
+  REPLY --> OPS["LLM Ops<br/>trace → eval → gate → release"]
+  OPS -. improved prompt/config .-> WM
+```
+
+Every box is one module (full version with every file path: [docs/architecture.md](docs/architecture.md)):
 
 | Diagram box | Module |
 |---|---|
@@ -87,6 +107,13 @@ Every box on the architecture diagram is one module ([diagram](docs/architecture
 | Trace (1 trace per run) | [`jarvis/ops/tracing.py`](jarvis/ops/tracing.py) |
 | Eval: deterministic vs LLM-as-judge | [`evals/deterministic/`](evals/deterministic) vs [`evals/judge/`](evals/judge) |
 | Gate → Release | [`jarvis/ops/release_gate.py`](jarvis/ops/release_gate.py) |
+
+**A note on `MEMORY.md` vs `state.db`.** Some assistants (e.g. Hermes) keep long-term memory as a
+single `MEMORY.md` markdown file. Jarvis stores the same thing as structured rows in one SQLite
+file — `state.db`, with `facts` and `episodes` tables and an FTS5 keyword index — so memory is
+*queryable and searchable*, not a growing text blob. Same concept (durable memory the agent reads
+back), sturdier storage. The dashboard's **Memory** tab is the friendly view; the **Database** tab
+shows the raw `state.db` tables.
 
 ## The Loop — reason → act → repeat
 
