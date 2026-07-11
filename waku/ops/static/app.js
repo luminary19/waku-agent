@@ -336,7 +336,7 @@ function dbQueryView(){
 let SESSION = "default";
 async function newChat(){
   const r = await postJSON("/api/session", {action:"new"});
-  if (r.session_id){ SESSION = r.session_id; CHAT.length = 0; syncChatLogs(); }
+  if (r.session_id){ liveView = null; SESSION = r.session_id; CHAT.length = 0; syncChatLogs(); }
   closeSessMenu();
 }
 async function switchSession(id){
@@ -350,12 +350,27 @@ async function switchSession(id){
   closeSessMenu();
 }
 // Open a conversation from the Gateway inbox: load it into the dock (the active
-// thread) and make sure the dock is visible.
+// thread), keep it live-synced (so new Telegram/voice messages appear), and make
+// sure the dock is visible.
+let liveView = null;   // a conversation opened from the inbox, kept live-updated
 async function openConversation(id){
   document.body.classList.remove("dock-closed");
   localStorage.setItem("dockClosed", "0");
-  await switchSession(id);
-  render();  // reflect the new active session's highlight in the inbox
+  liveView = id;
+  await switchSession(id);   // switch the agent so a reply continues this thread
+  render();                  // reflect the active-session highlight in the inbox
+}
+// Re-pull the opened conversation each refresh so incoming messages from another
+// gateway (your phone) show up live — unless a turn is mid-stream in the dock.
+async function syncLiveView(){
+  if (!liveView || CHAT.some(m => m.pending)) return;
+  const r = await postJSON("/api/session", {action:"history", id:liveView});
+  if (!r.ok) return;
+  const fresh = (r.history||[]).map(m => m.role==="user"
+    ? {role:"user", text:m.content} : {role:"waku", reply:m.content, historical:true});
+  if (fresh.length !== CHAT.length){   // only redraw when it actually changed
+    CHAT.length = 0; fresh.forEach(m => CHAT.push(m)); syncChatLogs();
+  }
 }
 function closeSessMenu(){ const m=document.getElementById("sessmenu"); if(m) m.remove(); }
 function toggleSessMenu(ev){
@@ -850,8 +865,11 @@ function tickLive(){
     `<span class="live"><span class="dot"></span>live</span> · updated ${ago}s ago · ${esc(D.home)}`;
 }
 async function refresh(){
-  try { D = await (await fetch("/api/data")).json(); lastFetch = Date.now(); render(); tickLive(); }
-  catch(e){ /* server restarting — keep showing last data */ }
+  try {
+    D = await (await fetch("/api/data")).json(); lastFetch = Date.now();
+    render(); tickLive();
+    syncLiveView();   // live-update an opened conversation (e.g. new phone messages)
+  } catch(e){ /* server restarting — keep showing last data */ }
 }
 // --- resizable columns: drag the thin handle between nav|main and main|dock.
 // Width lives in a CSS var + localStorage, so it survives refreshes.

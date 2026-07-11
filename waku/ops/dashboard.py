@@ -522,9 +522,22 @@ def transcribe_audio(raw: bytes) -> dict:
 
 
 def session_action(payload: dict) -> dict:
-    """Chat history control: start a new conversation, or switch to a past one
-    (reloading its history so replies keep context). Sessions live in chat_log."""
+    """Chat history control: start a new conversation, switch to a past one, or
+    read a conversation's history (read-only, for the live inbox). Sessions live
+    in chat_log."""
     action = payload.get("action")
+    if action == "history":
+        # read-only view of a conversation — never touches the agent, so the
+        # dashboard can poll it live (e.g. to show new Telegram messages arrive).
+        settings = load_settings()
+        settings.ensure_home()
+        conn = connect(settings.home)
+        rows = conn.execute(
+            "SELECT role, content FROM chat_log WHERE session_id=? ORDER BY id",
+            (payload.get("id") or "default",),
+        ).fetchall()
+        return {"ok": True, "session_id": payload.get("id") or "default",
+                "history": [{"role": r["role"], "content": r["content"]} for r in rows]}
     with _agent_lock:
         agent = _get_agent()
         if action == "new":
