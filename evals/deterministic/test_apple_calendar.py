@@ -22,3 +22,23 @@ def test_sync_escapes_quotes_and_backslashes():
         return
     # on macOS we can't run osascript in CI, but the escaping is in the string build;
     # covered by the pure date test above + manual verification on the dev machine.
+
+
+def test_create_event_handles_empty_call_gracefully():
+    # Live bug: a model emitted create_event({}) mid-loop and Python raised a raw
+    # TypeError. The tool must return a helpful message instead of crashing.
+    import sqlite3
+
+    from jarvis.tools.calendar import make_tool
+
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(
+        'CREATE TABLE calendar_events (id INTEGER PRIMARY KEY, title TEXT, start TEXT, '
+        '"end" TEXT, attendees TEXT, notes TEXT, created_at TEXT);'
+    )
+    from pathlib import Path
+    import tempfile
+    fn = make_tool(conn, Path(tempfile.mkdtemp())).fn
+    out = fn()  # empty call — no title, no start
+    assert "needs at least a title" in out
+    assert "Error" not in out and "TypeError" not in out

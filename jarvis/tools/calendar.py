@@ -117,7 +117,12 @@ end tell'''
 
 
 def make_tool(conn: sqlite3.Connection, home: Path, apple_calendar: bool = False) -> Tool:
-    def create_event(title: str, start: str, end: str = "", attendees: str = "", notes: str = "") -> str:
+    def create_event(title: str = "", start: str = "", end: str = "", attendees: str = "", notes: str = "") -> str:
+        # Defensive: models sometimes emit an empty/partial tool call. Return a
+        # helpful message the model can recover from, not a raw Python TypeError.
+        if not title or not start:
+            return ("create_event needs at least a title and a start time "
+                    "(ISO 8601, e.g. 2026-07-14T09:00). Please call it again with both.")
         if not end:
             # default: one hour
             from datetime import timedelta
