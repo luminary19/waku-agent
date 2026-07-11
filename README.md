@@ -1,19 +1,17 @@
 # waku-agent
 
-**Your own Waku, on your own laptop, in code you can read in an afternoon.**
+**Your own AI assistant. On your laptop. In code you can read in an afternoon.**
 
-A minimal, transparent, local-first personal AI assistant that demonstrates the four
-pillars of every serious agent system — **Harness, Loop, Memory, Eval/LLM-Ops** — with
-zero frameworks hiding the interesting parts. Built for the
-[Sean's AI Stories](https://www.youtube.com/@SeanAIStories) video series.
+Meet **Waku** — a local-first personal assistant that shows the four pillars behind every
+serious agent: **Harness · Loop · Memory · Eval/LLM-Ops**. No frameworks hiding the good parts.
+Built for [Sean's AI Stories](https://www.youtube.com/@SeanAIStories).
 
-- **Local-first** — your memory is one SQLite file on your machine. Open it. Read it.
-- **Memory is the hero** — procedural / semantic / episodic, with a gate that decides
-  *whether* to retrieve and a consolidation pass that decides *what* to keep.
-- **Transparent loop** — the agent loop is ~100 lines of plain Python you can step through.
-- **Watch it think** — a local dashboard animates every message as it flows through the
-  harness, and links straight to the real files it reads and writes.
-- **Eval built in** — deterministic tests AND LLM-as-judge, side by side, with a release gate.
+- **Local-first.** Your memory is one SQLite file. Open it. Read it. It's yours.
+- **Memory is the hero.** Semantic + episodic + procedural — with a gate that decides *whether*
+  to remember, and a pass that decides *what* to keep.
+- **The loop is ~95 lines** of plain Python. Step through it.
+- **Watch it think.** A local dashboard lights up every message as it flows through the harness.
+- **Eval built in.** Deterministic tests *and* LLM-as-judge, side by side, with a release gate.
 
 ![waku-agent architecture — the whiteboard](docs/architecture-whiteboard.png)
 
@@ -31,31 +29,25 @@ uv run waku                             # talk to your Waku in the terminal
 uv run waku dashboard                   # …or the browser cockpit → localhost:7777
 ```
 
-`uv run waku …` needs **no venv activation** — uv runs it in the project env for you. Three ways
-to run it, pick what you like:
+`uv run waku …` needs **no venv activation**. Three ways to run it:
 
-| Command | Notes |
+| Command | When |
 |---|---|
-| `uv run waku dashboard` | zero setup, no activation (recommended) |
-| `source .venv/bin/activate` then `waku dashboard` | activate once, then bare `waku` works all session |
-| `uv tool install .` then `waku dashboard` | install it **globally** — `waku` works in any terminal, forever |
+| `uv run waku dashboard` | quick start, zero activation (recommended) |
+| `source .venv/bin/activate` → `waku dashboard` | activate once, bare `waku` all session |
+| `uv tool install .` → `waku dashboard` | install `waku` **globally**, forever |
 
-(`make dashboard` also works.) A bare `waku` only fails with `command not found` when the venv
-isn't on your PATH — that's inherent to Python virtualenvs, hence the options above.
+`waku` and `waku dashboard` are two doors into the **same** Waku. The dashboard is a tiny web
+server on *your* machine — chat in the browser, that process runs the turn. Nothing leaves your
+laptop. Set `TELEGRAM_BOT_TOKEN` and it starts your bot too. (`make dashboard` works as well.)
 
-`waku` and `waku dashboard` are two doorways into the **same** local Waku (same
-`state.db`, same loop). `waku dashboard` starts a tiny web server on **your** machine; when
-you chat in the browser, *that process* runs the turn — nothing leaves your laptop (bound to
-`127.0.0.1`). If `TELEGRAM_BOT_TOKEN` is set, `waku dashboard` also starts your Telegram bot in
-the background, so one command runs every gateway. (`make run` / `make dashboard` still work too.)
+**Now try it.** *"Remember that Alex prefers morning meetings."* Quit. Restart.
+*"Book a catch-up with Alex on Friday."* → it remembers, and books 9am. Your memory is one
+file: `.waku/state.db`.
 
-Try: *"Remember that Alex prefers morning meetings."* Quit. Restart.
-*"Book a catch-up with Alex on Friday."* — it remembers, and it books 9am.
-Your calendar is `.waku/calendar.ics`; your memory is `.waku/state.db`.
-
-**Works with the model you already pay for**: Anthropic (default), OpenAI, Google
-Gemini, Kimi, or GLM — set `WAKU_PROVIDER=` to one of them, paste that key, done.
-The loop speaks one dialect; a [~60-line adapter](waku/loop/models.py) covers the rest.
+**Use the model you already pay for.** Anthropic (default), OpenAI, Gemini, Kimi, or GLM —
+set `WAKU_PROVIDER=`, paste the key, done. One dialect in the loop; a
+[~60-line adapter](waku/loop/models.py) handles the rest.
 
 ## Watch the harness run — the dashboard
 
@@ -63,16 +55,14 @@ The loop speaks one dialect; a [~60-line adapter](waku/loop/models.py) covers th
 waku dashboard          # starts a local server → http://localhost:7777
 ```
 
-This runs a small stdlib web server *you* own (`python -m waku.ops.dashboard`, bound to
-`127.0.0.1`). The browser is just the UI — the same Python process runs every turn, so
-chatting here is identical to `make run`, only with a live view. This is the fastest way to
-*understand* the system. A chat dock sits on the right of
-every tab — type or **speak** (local Whisper, no cloud) and watch it flow through the
-harness on the Overview diagram: the retrieval gate lights up, the loop calls a tool,
-the reply comes back, memory updates — the same pipeline every gateway drives. The whole
-frontend is plain static files (`waku/ops/static/`), served with no build step.
+A small web server you own (`127.0.0.1`, no cloud). The browser is just the UI — the same
+process runs every turn. This is the fastest way to *get* the system.
 
-Every tab is a window into one pillar, and each links straight to the real local files:
+A chat dock sits on every tab. Type or **speak**, and watch it flow through the harness on the
+Overview diagram: gate lights up → loop calls a tool → reply comes back → memory updates. The
+frontend is plain static files. No build step.
+
+Each tab is one pillar, linked to the real files:
 
 | Tab | What you see |
 |---|---|
@@ -100,21 +90,19 @@ Type these in the chat dock (or `make run`) and watch the dashboard light up:
 | *"Search for the World Cup games still left to play and add each one to my calendar"* | **multi-tool loop engineering** | **Loop** tab shows `iter 8`: `search_web` × N → `create_event` × N |
 | chat from `make run` **and** the browser | one brain, many gateways | the **Gateway** tab tags each message `cli` / `dashboard` |
 
-**The money shot** is the World Cup one: in a single turn the agent searches the web several
-times, reasons over the results, and books every remaining match — the loop runs **8 iterations**.
-It needs a free `TAVILY_API_KEY` for reliable search (paste it on the **Settings** page). Watch the
-**LOOP** box pulse once per cycle and the iteration count climb on the **Loop** tab — that's loop
+**The money shot** is the World Cup one. In one turn, Waku searches the web a few times, reasons
+over the results, and books every remaining match — **8 loop iterations**, live. Needs a free
+`TAVILY_API_KEY` (paste it in **Settings**). Watch the **LOOP** box pulse per cycle. That's loop
 engineering, on tape.
 
-## How is this different from Claude Desktop / ChatGPT / Cowork?
+## How is this different from ChatGPT / Claude Desktop?
 
-Those are excellent products you *use*. This is a small codebase you *own*: every
-layer — the loop, the memory schema, the retrieval gate, the eval harness — is yours
-to read, modify, and extend. When you understand this repo, you understand what all
-the products are doing under the hood. That's the point.
+Those are products you *use*. This is a codebase you *own* — the loop, the memory schema, the
+gate, the eval harness, all yours to read and change. Understand this repo, and you understand
+what the products do under the hood.
 
-And versus the big open-source assistants (OpenClaw, Hermes)? Same architecture,
-1/100th the code. They're products; this is the readable blueprint.
+Versus the big open-source assistants (OpenClaw, Hermes)? Same architecture, 1/100th the code.
+Products vs. a readable blueprint.
 
 ## The whiteboard maps to the code
 
@@ -389,7 +377,7 @@ The `waku` command is installed with the package; the `make` targets are equival
 |---|---|
 | `waku` | chat in the terminal |
 | `waku dashboard` | the live cockpit at localhost:7777 (+ Telegram if `TELEGRAM_BOT_TOKEN` is set) |
-| `waku voice` | talk to it (push-to-talk or wake word) |
+| `waku voice` | talk to it — hands-free "waku waku" (or push-to-talk) |
 | `waku telegram` | message it from your phone (standalone) |
 | `waku brief` | morning briefing from Calendar + Mail + memory |
 | `make trace` | deep trace waterfalls (Phoenix) at localhost:6006 |
