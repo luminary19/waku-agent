@@ -1,19 +1,14 @@
-# launch-jarvis — working conventions
-
-Teaching repo: a local-first personal assistant demonstrating Harness, Loop,
-Memory, and Eval/LLM-Ops. The bar for every change: **readable in an afternoon**.
-
 ## Architecture map (file ↔ diagram box)
 
-- `jarvis/gateway/` — cli, voice (wake word), telegram. Gateways only move text.
-- `jarvis/runtime/session.py` — working memory assembly (SOUL.md + memory + history)
-- `jarvis/loop/agent.py` — THE loop; `loop/models.py` — 5 providers, 2 wire formats
-- `jarvis/tools/` — create_event / save_note / send_message (flagship task only)
-- `jarvis/memory/` — semantic (FTS5) / episodic / procedural (SKILL.md) +
+- `waku/gateway/` — cli, voice (wake word), telegram. Gateways only move text.
+- `waku/runtime/session.py` — working memory assembly (SOUL.md + memory + history)
+- `waku/loop/agent.py` — THE loop; `loop/models.py` — 5 providers, 2 wire formats
+- `waku/tools/` — create_event / save_note / send_message (flagship task only)
+- `waku/memory/` — semantic (FTS5) / episodic / procedural (SKILL.md) +
   `retrieval_gate.py` (hero 1) + `consolidation.py` (every N exchanges)
-- `jarvis/ops/` — tracing (JSONL + OTel), dashboard (localhost:7777), release_gate
+- `waku/ops/` — tracing (JSONL + OTel), dashboard (localhost:7777), release_gate
 - `evals/deterministic/` (0/1, pytest) vs `evals/judge/` (DeepEval, scored) — never mix
-- Runtime state lives in `.jarvis/` (state.db, calendar.ics, outbox/, traces/) — gitignored
+- Runtime state lives in `.waku/` (state.db, calendar.ics, outbox/, traces/) — gitignored
 
 ## Rules
 

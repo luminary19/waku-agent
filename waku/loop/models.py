@@ -128,15 +128,24 @@ class OpenAICompatClient:
                               "parameters": t["input_schema"]}}
                 for t in tools
             ]
+            # OpenAI reasoning models (gpt-5.x) reject function tools over
+            # chat.completions unless reasoning is off — 'none' is OpenAI's own
+            # documented remedy, and a valid value on Gemini's OpenAI-compat
+            # endpoint too. Only sent on tool turns, so non-tool turns still reason.
+            kwargs["reasoning_effort"] = "none"
         return kwargs
 
     def _call(self, kwargs: dict, **extra):
-        """Run chat.completions.create with the max_tokens key-name fallback
-        (older OpenAI-compatible endpoints only know max_tokens, not the newer
-        max_completion_tokens)."""
+        """Run chat.completions.create with a max_tokens key-name fallback:
+        newer OpenAI models require max_completion_tokens, but some older
+        OpenAI-compatible endpoints only know max_tokens. Retry with the old
+        key ONLY when the failure is actually about that parameter name —
+        otherwise re-raise so the real error is not masked by the fallback."""
         try:
             return self._client.chat.completions.create(**kwargs, **extra)
-        except Exception:
+        except Exception as err:
+            if "max_completion_tokens" not in str(err):
+                raise
             k = dict(kwargs)
             k["max_tokens"] = k.pop("max_completion_tokens", None)
             return self._client.chat.completions.create(**k, **extra)
