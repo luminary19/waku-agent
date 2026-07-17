@@ -95,14 +95,156 @@ async function saveSkill(i){
 async function saveSettings(){
   const provider = document.getElementById("set-provider").value;
   const model = document.getElementById("set-model").value.trim();
+  const small_model = (document.getElementById("set-small-model")?.value || "").trim();
   const keys = {};
   document.querySelectorAll("[data-key]").forEach(i => { if(i.value.trim()) keys[i.dataset.key] = i.value.trim(); });
   document.getElementById("set-msg").textContent = "switching…";
-  const r = await postJSON("/api/settings", {provider, model, keys});
+  const r = await postJSON("/api/settings", {provider, model, small_model, keys});
   document.getElementById("set-msg").textContent = r.error ? ("Error: "+r.error) : "Switched to "+r.provider+" — live now.";
-  if(!r.error) refresh();
+  if(!r.error){ modelCatalog = null; refresh(); }
 }
 function markEditing(){ editing = true; }
+
+// Model picker: fill the settings datalist from /api/models (the active
+// endpoint's live catalog; on OpenRouter each entry says free / tool support).
+// Waku's loop needs tool calling, so tool-less models are labelled as such.
+let modelCatalog = null;
+async function loadModelList(){
+  const dl = document.getElementById("model-list");
+  if (!dl) return;
+  if (modelCatalog === null){
+    try { modelCatalog = await (await fetch("/api/models")).json(); }
+    catch(e){ modelCatalog = {models:[], listed:false}; }
+  }
+  const ms = modelCatalog.models || [];
+  dl.innerHTML = ms.map(m => {
+    const price = m.free ? "free" : (m.price_out != null ? `$${m.price_in}/$${m.price_out} per M` : "");
+    const tags = [price, m.tools === false ? "chat-only" : "", m.reasoning ? "reasoning" : "",
+                  m.context ? Math.round(m.context/1000) + "k ctx" : ""].filter(Boolean).join(" · ");
+    return `<option value="${esc(m.id)}">${esc(tags)}</option>`;
+  }).join("");
+  const msg = document.getElementById("model-list-msg");
+  if (!msg) return;
+  if (modelCatalog.listed){
+    const free = ms.filter(m=>m.free), freeTools = free.filter(m=>m.tools);
+    msg.textContent = `${ms.length} models on ${modelCatalog.endpoint}` +
+      (free.length ? ` · ${free.length} free, ${freeTools.length} of those tool-capable (Waku needs tool calling)` : "") +
+      ` · type in the field above to search`;
+  } else {
+    msg.textContent = modelCatalog.error ? `model list unavailable: ${modelCatalog.error}` : "";
+  }
+  renderCatalog();
+}
+
+// The catalog browser (shown when the endpoint lists models, i.e. OpenRouter):
+// suggested picks per SLOT, a search + free/tools filter, and the full list
+// grouped by vendor. Every row can go to either slot: "use" is the loop model
+// (needs tool calling), "gate" is the small model (needs terse JSON, so
+// reasoning models are steered away from it).
+let catFilter = {q: "", free: false, tools: false};
+
+function modelRow(m, st){
+  const cur = m.id === st.model, curGate = m.id === st.small_model;
+  const price = m.free ? "free" : (m.price_out != null ? `$${m.price_in}/$${m.price_out} per M` : "");
+  const tags = [price, m.context ? Math.round(m.context/1000) + "k ctx" : ""]
+               .filter(Boolean).join(" · ");
+  return `<div class="tool" style="display:flex;align-items:center;gap:8px;padding:6px 8px">
+    <code style="flex:1;word-break:break-all">${esc(m.id)}</code>
+    <span class="meta" style="margin:0;white-space:nowrap">${esc(tags)}</span>
+    ${m.reasoning ? `<span class="srcpill apple" title="thinks out loud before answering: fine for the loop, a poor fit for the gate's tiny token budget">reasoning</span>` : ""}
+    ${curGate ? `<span class="srcpill">GATE</span>`
+              : `<a class="reveal" data-id="${esc(m.id)}" onclick="switchModel(this.dataset.id,true)" title="use as the gate/summary model">gate</a>`}
+    ${cur ? `<span class="srcpill" style="background:var(--good-soft);color:var(--good)">CURRENT</span>`
+          : (m.tools === false ? `<span class="meta" style="margin:0" title="the loop needs tool calling">chat-only</span>`
+                               : `<button class="save" data-id="${esc(m.id)}" onclick="switchModel(this.dataset.id)">use</button>`)}
+  </div>`;
+}
+
+// Slot suggestions are transparent heuristics over catalog metadata (tools,
+// price, context, reasoning), NOT a quality leaderboard. Loop: tool-capable,
+// free first, then biggest context. Gate: cheap non-reasoning instruct-style.
+const GATE_HINT = /instruct|gemma|haiku|flash|mini|nano|lite|small/;
+function loopPicks(ms){
+  return ms.filter(m => m.tools)
+           .sort((a,b) => (b.free - a.free) || ((b.context||0) - (a.context||0))).slice(0, 4);
+}
+function gatePicks(ms){
+  return ms.filter(m => m.tools !== false && m.reasoning !== true
+                        && (m.free || (m.price_out != null && m.price_out <= 1.5)))
+           .sort((a,b) => (GATE_HINT.test(b.id) - GATE_HINT.test(a.id))
+                        || (b.free - a.free) || ((a.price_out||99) - (b.price_out||99))).slice(0, 4);
+}
+
+function renderCatalog(){
+  const box = document.getElementById("catalog");
+  if (!box || !modelCatalog) return;
+  const all = modelCatalog.models || [];
+  const head = document.getElementById("catalog-h");
+  if (!modelCatalog.listed || !all.length){
+    box.style.display = "none"; if (head) head.style.display = "none"; return;
+  }
+  box.style.display = ""; if (head) head.style.display = "";
+  box.innerHTML = `
+    <div class="cat-controls">
+      <input id="cat-q" type="text" placeholder="filter models…" value="${esc(catFilter.q)}"
+        onfocus="markEditing()" oninput="catFilter.q=this.value;renderCatalogList()">
+      <label class="meta" style="margin:0"><input type="checkbox" id="cat-free" ${catFilter.free?"checked":""}
+        onchange="catFilter.free=this.checked;renderCatalogList()"> free only</label>
+      <label class="meta" style="margin:0"><input type="checkbox" id="cat-tools" ${catFilter.tools?"checked":""}
+        onchange="catFilter.tools=this.checked;renderCatalogList()"> tool-capable only</label>
+    </div>
+    <div id="cat-list"></div>
+    <div class="meta" id="free-switch-msg" style="margin-top:6px"></div>`;
+  renderCatalogList();
+}
+
+function renderCatalogList(){
+  const list = document.getElementById("cat-list");
+  if (!list || !modelCatalog) return;
+  const st = (D && D.settings) || {};
+  const all = modelCatalog.models || [];
+  const q = catFilter.q.trim().toLowerCase();
+  const shown = all.filter(m => (!q || m.id.toLowerCase().includes(q))
+                             && (!catFilter.free || m.free)
+                             && (!catFilter.tools || m.tools));
+  let h = "";
+  if (!q && !catFilter.free && !catFilter.tools){
+    h += `<div class="meta" style="margin:4px 0">Suggested picks: transparent heuristics from catalog metadata (tools, price, context), not a quality leaderboard</div>`;
+    h += `<div class="meta" style="margin:6px 0 2px"><b>For the loop</b> (needs tool calling; free first, biggest context)</div>`;
+    h += loopPicks(all).map(m => modelRow(m, st)).join("");
+    h += `<div class="meta" style="margin:10px 0 2px"><b>For the gate</b> (cheap, terse, non-reasoning)</div>`;
+    h += gatePicks(all).map(m => modelRow(m, st)).join("");
+    h += `<div class="meta" style="margin:12px 0 2px"><b>Everything</b> (${all.length} models, by vendor)</div>`;
+  } else {
+    h += `<div class="meta" style="margin:4px 0">${shown.length} of ${all.length} models</div>`;
+  }
+  const vendors = {};
+  shown.forEach(m => (vendors[m.id.split("/")[0]] ??= []).push(m));
+  const expand = q || catFilter.free || catFilter.tools;
+  h += Object.keys(vendors).sort().map(v => `
+    <details ${expand ? "open" : ""}><summary><code>${esc(v)}</code>
+      <span class="meta" style="margin-left:6px">${vendors[v].length}${vendors[v].some(m=>m.free) ? " · has free" : ""}</span></summary>
+      ${vendors[v].map(m => modelRow(m, st)).join("")}
+    </details>`).join("");
+  list.innerHTML = h;
+}
+
+// One-click model switch: same /api/settings path as the Save button, keeping
+// the other slot (main vs gate) as-is. Live for the next turn.
+async function switchModel(id, asGate){
+  const st = (D && D.settings) || {};
+  const msg = document.getElementById("free-switch-msg");
+  if (msg) msg.textContent = "switching…";
+  const r = await postJSON("/api/settings", {
+    provider: st.provider,
+    model: asGate ? st.model : id,
+    small_model: asGate ? id : st.small_model,
+    keys: {},
+  });
+  if (msg) msg.textContent = r.error ? ("Error: " + r.error)
+                                     : (asGate ? "Gate model is now " : "Model is now ") + id + ". Applies from your next message.";
+  if (!r.error){ editing = false; await refresh(); }
+}
 
 const money = n => "$" + (n < 0.01 ? n.toFixed(4) : n.toFixed(2));
 const secs = ms => ms==null ? "—" : (ms/1000).toFixed(1)+"s";
@@ -170,7 +312,10 @@ const streamingCard = m => `<div class="card">
   ${(m.tools||[]).map(toolRow).join("")}
   ${m.stream
      ? `<div class="r" style="margin-top:8px">${renderMarkdown(m.stream)}<span class="caret"></span></div>`
-     : `<div class="meta" style="margin:0">thinking&hellip;</div>`}
+     : `<div class="meta" style="margin:0">thinking&hellip;${m.started?` ${Math.round((Date.now()-m.started)/1000)}s`:""}${
+         m.started && Date.now()-m.started > 20000
+         ? `<br>still waiting: slow models (free tiers especially) can queue for a while; this errors out at the WAKU_LLM_TIMEOUT limit instead of hanging forever`
+         : ""}</div>`}
 </div>`;
 
 // Messages loaded from history (a switched/opened conversation) have no live
@@ -220,9 +365,11 @@ async function sendChat(fromInput){
   if (!text) return;
   input.value = "";
   CHAT.push({role:"user", text});
-  const pending = {role:"waku", pending:true, stream:""};
+  const pending = {role:"waku", pending:true, stream:"", started: Date.now()};
   CHAT.push(pending);
   syncChatLogs();
+  // tick the elapsed counter while we wait for the first token
+  const ticker = setInterval(() => { if (pending.pending && !pending.stream) syncChatLogs(); }, 1000);
   try {
     const res = await fetch("/api/chat/stream", {method:"POST",
       headers:{"Content-Type":"application/json"}, body:JSON.stringify({message:text})});
@@ -241,6 +388,7 @@ async function sendChat(fromInput){
       }
     }
   } catch(e){ Object.assign(pending, {pending:false, reply:"Error: "+e}); }
+  clearInterval(ticker);
   if (pending.pending) pending.pending = false;   // stream ended without a 'done'
   syncChatLogs();
   input.focus();
@@ -667,15 +815,24 @@ const VIEWS = {
     h += `<h2>Provider &amp; keys (BYOK)</h2><div class="card">
       <label class="fld">Provider
         <select id="set-provider" onfocus="markEditing()">${st.providers.map(p=>`<option value="${p.name}" ${p.name===st.provider?"selected":""}>${p.name} (default ${esc(p.default_model)})</option>`).join("")}</select></label>
-      <label class="fld">Model override <input id="set-model" placeholder="blank = provider default" value="${st.model===st.providers.find(p=>p.name===st.provider)?.default_model?"":esc(st.model)}"></label>
+      ${st.base_url?`<div class="meta" style="margin:4px 0 8px">Custom endpoint active: <code>${esc(st.base_url)}</code> (WAKU_BASE_URL${st.custom_key_set?" + WAKU_API_KEY":""}). The model list below comes from it.</div>`:""}
+      <details class="adv"><summary>Type a model id manually (advanced; the catalog below switches in one click)</summary>
+      <label class="fld">Model (runs the loop; needs tool calling) <input id="set-model" list="model-list" onfocus="markEditing()" placeholder="blank = provider default" value="${st.model===st.providers.find(p=>p.name===st.provider)?.default_model?"":esc(st.model)}"></label>
+      <label class="fld">Gate / summary model (the small model that decides whether a message needs memory, and distills chats into facts; pick something cheap and terse) <input id="set-small-model" list="model-list" onfocus="markEditing()" placeholder="blank = provider default" value="${st.small_model===st.providers.find(p=>p.name===st.provider)?.default_small_model?"":esc(st.small_model)}"></label>
+      <datalist id="model-list"></datalist>
+      <div class="meta" id="model-list-msg" style="margin:4px 0 8px"></div></details>${(setTimeout(loadModelList,0),"")}
+      <details class="adv" ${st.providers.find(p=>p.name===st.provider)?.key_set?"":"open"}><summary>API keys (${st.providers.find(p=>p.name===st.provider)?.key_set?`${esc(st.provider)} key set`:`${esc(st.provider)} key needed`})</summary>
       <div class="meta" style="margin:10px 0 4px">Keys stay in your local <code>.env</code> — never sent back to this page (only a set/not-set status and the last 4 digits). Leave a field blank to keep the current key.</div>
       ${st.providers.map(p=>`<label class="fld"><span>${p.name} key <span class="meta">(${p.key_env})</span>
         ${p.key_set?`<span class="srcpill" style="background:var(--good-soft);color:var(--good)">set ····${esc(p.key_last4)}</span>`
                    :`<span class="srcpill apple">not set</span>`}</span>
         <input type="password" data-key="${p.key_env}" placeholder="${p.key_set?"key on file — blank keeps it":"paste key"}"></label>`).join("")}
+      </details>
       <div style="margin-top:12px"><button class="save" onclick="saveSettings()">Save &amp; switch</button>
         <span class="meta" id="set-msg" style="margin-left:10px"></span></div>
     </div>
+    <h2 id="catalog-h" style="display:none">Model catalog: click to switch</h2>
+    <div class="card" id="catalog" style="display:none"></div>
     <h2>Web search key (optional)</h2><div class="card">
       <div class="meta" style="margin-bottom:8px">A free <a class="reveal" onclick="window.open('https://tavily.com','_blank')">Tavily</a> key makes the <code>search_web</code> tool reliable (the World Cup demo). Stored in your local <code>.env</code>, same as above.</div>
       <label class="fld"><span>Tavily key <span class="meta">(${esc(st.search_key_env||"TAVILY_API_KEY")})</span>

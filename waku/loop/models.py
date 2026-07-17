@@ -6,12 +6,13 @@ in, content blocks out). Providers plug in two ways:
   anthropic wire format (native)     → Anthropic, Kimi/Moonshot, GLM/Z.ai, MiniMax
   openai wire format (thin adapter)  → OpenAI, Google Gemini, DeepSeek, OpenRouter
 
-Pick with WAKU_PROVIDER=anthropic|openai|gemini|deepseek|kimi|glm|openrouter|minimax and
-set that provider's API key in .env. Override the model ids with WAKU_MODEL /
+Pick with WAKU_PROVIDER=anthropic|openai|gemini|deepseek|minimax|kimi|glm|openrouter
+and set that provider's API key in .env. Override the model ids with WAKU_MODEL /
 WAKU_SMALL_MODEL if the defaults below age out — they're just strings. This
-matters most for openrouter: it's a single key in front of hundreds of
-models, so WAKU_MODEL=<vendor>/<model> (e.g. "google/gemini-3.5-flash") picks
-whichever one you want.
+matters most for openrouter: it's a single key in front of hundreds of models,
+so WAKU_MODEL=<vendor>/<model> (e.g. "google/gemini-3.5-flash") picks whichever
+one you want — and its defaults below are $0 ":free" ids, so it works with no
+spend at all (rate-limited). The dashboard Settings tab lists the live catalog.
 """
 
 from __future__ import annotations
@@ -38,6 +39,11 @@ PROVIDERS: dict[str, Provider] = {
                           "claude-sonnet-5", "claude-haiku-4-5-20251001"),
     "openai":    Provider("openai", "OPENAI_API_KEY", None,
                           "gpt-5.6", "gpt-5.6-luna"),
+    # one key, every lab's models, and a $0 tier: the default models below are
+    # free ids (":free" suffix). Rate-limited (~50 req/day without credits).
+    "openrouter": Provider("openai", "OPENROUTER_API_KEY", "https://openrouter.ai/api/v1",
+                           "nvidia/nemotron-3-super-120b-a12b:free",
+                           "google/gemma-4-26b-a4b-it:free"),
     "gemini":    Provider("openai", "GEMINI_API_KEY",
                           "https://generativelanguage.googleapis.com/v1beta/openai/",
                           "gemini-3.5-flash", "gemini-3.1-flash-lite"),
@@ -49,8 +55,6 @@ PROVIDERS: dict[str, Provider] = {
                           "kimi-k2.7", "kimi-k2.7"),
     "glm":       Provider("anthropic", "ZHIPU_API_KEY", "https://api.z.ai/api/anthropic",
                           "glm-5.2", "glm-5-turbo"),
-    "openrouter": Provider("openai", "OPENROUTER_API_KEY", "https://openrouter.ai/api/v1",
-                           "anthropic/claude-sonnet-5", "anthropic/claude-haiku-4.5"),
 }
 
 
@@ -153,6 +157,12 @@ class OpenAICompatClient:
     def _create(self, *, model, messages, max_tokens, system=None, tools=None):
         response = self._call(self._to_openai(
             model=model, messages=messages, max_tokens=max_tokens, system=system, tools=tools))
+        if not getattr(response, "choices", None):
+            # some OpenAI-compatible endpoints (e.g. OpenRouter on a rate
+            # limit) return 200 with an error body and no choices: surface
+            # that message instead of dying on a TypeError below
+            err = getattr(response, "error", None) or "endpoint returned no choices"
+            raise RuntimeError(f"{model}: {err}")
         choice = response.choices[0].message
         blocks = []
         if choice.content:

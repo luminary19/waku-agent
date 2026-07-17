@@ -116,13 +116,29 @@ def chat_stream(message: str, emit) -> None:
 
 # Rough $/million tokens (in, out) for a dollar ESTIMATE — the number humans
 # actually feel. Keyed by provider; deliberately approximate and labelled "est".
-# openrouter fans out to many underlying models at very different prices; this
-# row assumes the default model (see PROVIDERS) — real cost varies with WAKU_MODEL.
 PRICING = {
     "anthropic": (3.0, 15.0), "openai": (2.5, 15.0), "gemini": (0.3, 2.5),
     "deepseek": (0.435, 0.87), "minimax": (0.30, 1.20), "kimi": (0.6, 2.5), "glm": (0.6, 2.2),
-    "openrouter": (3.0, 15.0),
+    # openrouter fallback for paid models when the live catalog is unreachable
+    # (rough mid-catalog guess). ":free" ids and catalog-priced models never
+    # hit this: see price_for().
+    "openrouter": (1.0, 3.0),
 }
+
+# model id -> exact ($/M in, $/M out), filled from the live catalog fetch in
+# list_models(). OpenRouter reports per-model pricing, so cost estimates can
+# be exact per call instead of one number per provider.
+_price_cache: dict[str, tuple[float, float]] = {}
+
+
+def price_for(provider: str, model: str) -> tuple[float, float]:
+    """$/M tokens (in, out) for one call: the catalog's per-model price when
+    known, $0 for ":free" ids, else the provider-level PRICING estimate."""
+    if model in _price_cache:
+        return _price_cache[model]
+    if model.endswith(":free"):
+        return (0.0, 0.0)
+    return PRICING.get(provider, (3.0, 15.0))
 
 
 def usage_summary(home) -> dict:
@@ -140,7 +156,8 @@ def usage_summary(home) -> dict:
                 pass
 
     def cost(r) -> float:
-        pin, pout = PRICING.get(r.get("provider"), (3.0, 15.0))
+        # the ledger stores tokens + provider/model, so old rows reprice too
+        pin, pout = price_for(r.get("provider", ""), r.get("model", ""))
         return r.get("in", 0) / 1e6 * pin + r.get("out", 0) / 1e6 * pout
 
     def add(bucket, key, extra):
@@ -231,7 +248,9 @@ def collect() -> dict:
         turns.append(current)
 
     # --- derive per-turn latency + dollar cost (the ops numbers humans feel)
-    price_in, price_out = PRICING.get(settings.provider, (3.0, 15.0))
+    if settings.base_url or settings.provider == "openrouter":
+        list_models()  # warm the per-model price cache (5-min cached fetch)
+    price_in, price_out = price_for(settings.provider, settings.model or "")
     for t in turns:
         start, end = _parse_ts(t["ts"]), None
         last = t["llm_calls"][-1]["ts"] if t["llm_calls"] else None
@@ -305,7 +324,7 @@ def collect() -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "home": str(home.resolve()),
         "provider": settings.provider,
-        "model": settings.model or "(provider default)",
+        "model": settings_info()["model"],
         "stats": {
             "turns": len(turns),
             "tool_calls": sum(len(t["tools"]) for t in turns),
@@ -651,6 +670,78 @@ def memory_action(payload: dict) -> dict:
     return {"error": f"unknown action {action}"}
 
 
+_models_cache: dict[str, tuple[float, list]] = {}
+
+
+def list_models() -> dict:
+    """Model ids available on the ACTIVE endpoint, for the settings model
+    picker. OpenAI-compatible endpoints (OpenRouter, Gemini, any WAKU_BASE_URL)
+    expose GET {base_url}/models; native-wire providers just offer their two
+    defaults. OpenRouter entries carry free / tool-support / context metadata
+    so the picker can surface the $0 tool-capable models. Cached 5 minutes."""
+    import time
+    import urllib.request
+
+    from waku.loop.models import PROVIDERS
+
+    s = load_settings()
+    prov = PROVIDERS.get(s.provider)
+    base = s.base_url or (prov.base_url if prov else None)
+    out = {
+        "model": s.model or (prov.model if prov else ""),
+        "small_model": s.small_model or (prov.small_model if prov else ""),
+        "endpoint": base or s.provider,
+    }
+    if prov is None or prov.kind != "openai" or not base:
+        # no listing API on the anthropic wire: offer the known defaults
+        known = dict.fromkeys([out["model"], out["small_model"]]
+                              + ([prov.model, prov.small_model] if prov else []))
+        return {**out, "listed": False, "models": [{"id": m} for m in known if m]}
+
+    url = base.rstrip("/") + "/models"
+    cached = _models_cache.get(url)
+    if cached and time.time() - cached[0] < 300:
+        return {**out, "listed": True, "models": cached[1]}
+    key = s.api_key or os.getenv(prov.key_env, "")
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+    except Exception as exc:
+        # cache the failure for ~1 minute so an unreachable catalog doesn't
+        # stall every 5-second dashboard poll for 10s
+        _models_cache[url] = (time.time() - 240, [])
+        return {**out, "listed": False, "models": [], "error": str(exc)}
+    models = []
+    for m in data.get("data", []):
+        mid = m.get("id", "")
+        if not mid:
+            continue
+        pricing = m.get("pricing") or {}
+        params = m.get("supported_parameters")
+        entry = {
+            "id": mid,
+            "free": mid.endswith(":free") or pricing.get("prompt") == "0",
+            # None means the endpoint doesn't say (only OpenRouter reports this)
+            "tools": ("tools" in params) if params is not None else None,
+            # reasoning models spend tokens thinking out loud, which breaks the
+            # gate's tiny budget: the UI steers them away from the gate slot
+            "reasoning": ("reasoning" in params) if params is not None else None,
+            "context": m.get("context_length"),
+        }
+        try:
+            # OpenRouter prices are $/token strings; keep $/M for display + cost
+            pin, pout = float(pricing["prompt"]) * 1e6, float(pricing["completion"]) * 1e6
+            _price_cache[mid] = (pin, pout)
+            entry["price_in"], entry["price_out"] = round(pin, 3), round(pout, 3)
+        except (KeyError, TypeError, ValueError):
+            pass
+        models.append(entry)
+    models.sort(key=lambda x: (not x["free"], x["tools"] is False, x["id"]))
+    _models_cache[url] = (time.time(), models)
+    return {**out, "listed": True, "models": models}
+
+
 def settings_info() -> dict:
     """Current provider/model + which keys are set — masked to last-4, never
     the full key."""
@@ -662,11 +753,14 @@ def settings_info() -> dict:
         "provider": s.provider,
         "model": s.model or (prov.model if prov else ""),
         "small_model": s.small_model or (prov.small_model if prov else ""),
+        # a custom endpoint (e.g. OpenRouter) set via WAKU_BASE_URL / WAKU_API_KEY
+        "base_url": s.base_url or "",
+        "custom_key_set": bool(s.api_key),
         "providers": [
             {"name": name, "key_env": p.key_env,
              "key_set": bool(os.getenv(p.key_env)),
              "key_last4": (os.getenv(p.key_env) or "")[-4:],
-             "default_model": p.model}
+             "default_model": p.model, "default_small_model": p.small_model}
             for name, p in PROVIDERS.items()
         ],
         # optional web-search key (Tavily) — same BYOK treatment as provider keys
@@ -752,6 +846,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802 — http.server API
         if self.path == "/api/data":
             self._send(json.dumps(collect(), default=str).encode(), "application/json")
+        elif self.path == "/api/models":
+            self._send(json.dumps(list_models()).encode(), "application/json")
         elif self.path.startswith("/api/events"):
             from urllib.parse import parse_qs, urlparse
 
