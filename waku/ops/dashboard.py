@@ -55,6 +55,27 @@ def _get_agent():
     return _agent
 
 
+def _maybe_rotate_session(agent) -> None:
+    """A returning user should get a FRESH thread, not last week's. If the
+    current session's newest message is older than WAKU_SESSION_IDLE_MINUTES
+    (default 60), rotate to a new dated session id — the old thread stays one
+    click away in History. Live bug: a tester came back days later and their
+    new chat landed in a week-old 32-message thread."""
+    idle_min = int(os.getenv("WAKU_SESSION_IDLE_MINUTES", "60"))
+    if idle_min <= 0:
+        return
+    row = agent.conn.execute("SELECT MAX(created_at) FROM chat_log WHERE session_id=?",
+                             (agent.session.session_id,)).fetchone()
+    if not row or not row[0]:
+        return
+    try:  # sqlite datetime('now') is UTC "YYYY-MM-DD HH:MM:SS"
+        last = datetime.strptime(row[0], "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return
+    if (datetime.now(timezone.utc) - last).total_seconds() > idle_min * 60:
+        agent.session.start_new(datetime.now().strftime("dashboard-%Y%m%d-%H%M%S"))
+
+
 def chat(message: str) -> dict:
     """Run one real turn through the harness and return the structured result —
     gate decision, tool calls, reply, latency — so the browser can render the
@@ -62,6 +83,7 @@ def chat(message: str) -> dict:
     events: list[dict] = []
     with _agent_lock:
         agent = _get_agent()
+        _maybe_rotate_session(agent)
         start = datetime.now(timezone.utc)
         result = agent.respond(message, observer=lambda kind, ev: events.append({"kind": kind, **ev}),
                                source="dashboard")
@@ -97,6 +119,7 @@ def chat_stream(message: str, emit) -> None:
 
     with _agent_lock:
         agent = _get_agent()
+        _maybe_rotate_session(agent)
         start = datetime.now(timezone.utc)
         result = agent.respond(message, observer=observer, source="dashboard", stream=True)
         latency_ms = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
@@ -809,6 +832,9 @@ def apply_settings(payload: dict) -> dict:
     provider = payload.get("provider")
     if provider not in PROVIDERS:
         return {"error": f"unknown provider {provider}"}
+    before = {"provider": os.getenv("WAKU_PROVIDER", ""),
+              "model": os.getenv("WAKU_MODEL", ""),
+              "small_model": os.getenv("WAKU_SMALL_MODEL", "")}
     writable = ({"WAKU_PROVIDER", "WAKU_MODEL", "WAKU_SMALL_MODEL", "TAVILY_API_KEY"}
                 | {p.key_env for p in PROVIDERS.values()})
     env_path = find_dotenv(usecwd=True) or ".env"
@@ -838,6 +864,13 @@ def apply_settings(payload: dict) -> dict:
             return {"error": str(exc)}
     if old is not None:
         old.close()
+    # a model/provider switch is a RELEASE event (the whiteboard's "new model
+    # config" box) — record it in the trace so brain swaps are auditable
+    _agent.tracer.event("config", {
+        "from": before,
+        "to": {"provider": provider, "model": updates["WAKU_MODEL"],
+               "small_model": updates["WAKU_SMALL_MODEL"]},
+    })
     return {"ok": True, **settings_info()}
 
 

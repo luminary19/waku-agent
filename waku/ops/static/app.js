@@ -811,10 +811,10 @@ const VIEWS = {
   },
   settings(d){
     const st = d.settings || {providers:[]};
-    let h = `<div class="card">Current: <b>${esc(st.provider)}</b> · model <code>${esc(st.model)}</code> · gate model <code>${esc(st.small_model)}</code></div>`;
+    let h = `<div class="card">Current: <b>${esc(st.provider)}</b> · loop brain <code>${esc(st.model)}</code> · gate &amp; summarizer <code>${esc(st.small_model)}</code><div class="meta" style="margin:4px 0 0">two jobs, two brains: the loop brain answers you; the small gate model decides memory retrieval and distills chats</div></div>`;
     h += `<h2>Provider &amp; keys (BYOK)</h2><div class="card">
       <label class="fld">Provider
-        <select id="set-provider" onfocus="markEditing()">${st.providers.map(p=>`<option value="${p.name}" ${p.name===st.provider?"selected":""}>${p.name} (default ${esc(p.default_model)})</option>`).join("")}</select></label>
+        <select id="set-provider" onfocus="markEditing()">${st.providers.map(p=>`<option value="${p.name}" ${p.name===st.provider?"selected":""}>${p.name}${p.name===st.provider?` — now: ${esc(st.model)}`:` — provider default: ${esc(p.default_model)}`}</option>`).join("")}</select></label>
       ${st.base_url?`<div class="meta" style="margin:4px 0 8px">Custom endpoint active: <code>${esc(st.base_url)}</code> (WAKU_BASE_URL${st.custom_key_set?" + WAKU_API_KEY":""}). The model list below comes from it.</div>`:""}
       <details class="adv"><summary>Type a model id manually (advanced; the catalog below switches in one click)</summary>
       <label class="fld">Model (runs the loop; needs tool calling) <input id="set-model" list="model-list" onfocus="markEditing()" placeholder="blank = provider default" value="${st.model===st.providers.find(p=>p.name===st.provider)?.default_model?"":esc(st.model)}"></label>
