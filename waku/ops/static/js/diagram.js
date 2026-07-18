@@ -6,6 +6,8 @@
 // (Harness wraps the ephemeral run · Loop is a cycle · memory feeds up through
 // the gate · LLM Ops is a separate loop). Deliberately few arrows + lots of
 // air — the detail lives in each tab. Every node is live and clickable.
+// DO NOT rewrite this chart. The data-node/data-edge ids each box emits drive
+// the live animation via the STAGE map below — keep the two in sync.
 function archSVG(d){
   const s = d.stats;
   const box = (x,y,w,h,title,sub,view,cls="",nid="") =>
@@ -96,6 +98,10 @@ function archSVG(d){
 
 // ---- Live harness animation: light up the diagram as a turn flows through,
 // driven by the trace stream so ANY gateway (browser, phone, CLI) triggers it.
+// The node/edge ids below MUST match the data-node="…"/data-edge="…" ids that
+// archSVG emits above — change one, change the other (that's why both live in
+// this file). test_static_assets.py won't catch a mismatch here; the animation
+// just silently stops lighting a box.
 const STAGE = {
   turn_start:    {nodes:["gateway","wm"],            edges:["e-gw-wm"],                 label:"message in"},
   gate:          {nodes:["gate"],                    edges:["e-gate-wm"],               label:"retrieval gate"},
