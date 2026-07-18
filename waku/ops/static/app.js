@@ -92,6 +92,16 @@ async function saveSkill(i){
   document.getElementById("skmsg-"+i).textContent = r.error ? ("Error: "+r.error) : "Saved — live next turn.";
   if (!r.error){ const b=document.getElementById("sksave-"+i); if(b) b.disabled=true; editing=false; }
 }
+// The ONE writer to /api/settings (settings form, catalog "use", chat pill all
+// funnel through here) so the after-switch reset can't drift. On success it
+// releases the edit lock — else the render guard keeps showing the OLD state
+// (live bug: "Current:" card stayed on kimi after switching) — clears the stale
+// catalog, and re-fetches. Returns the response so callers show their own status.
+async function applyModel({provider, model, small_model, keys = {}}){
+  const r = await postJSON("/api/settings", {provider, model, small_model, keys});
+  if (!r.error){ editing = false; modelCatalog = null; await refresh(); }
+  return r;
+}
 async function saveSettings(){
   const provider = document.getElementById("set-provider").value;
   const model = document.getElementById("set-model").value.trim();
@@ -99,11 +109,8 @@ async function saveSettings(){
   const keys = {};
   document.querySelectorAll("[data-key]").forEach(i => { if(i.value.trim()) keys[i.dataset.key] = i.value.trim(); });
   document.getElementById("set-msg").textContent = "switching…";
-  const r = await postJSON("/api/settings", {provider, model, small_model, keys});
+  const r = await applyModel({provider, model, small_model, keys});
   document.getElementById("set-msg").textContent = r.error ? ("Error: "+r.error) : "Switched to "+r.provider+" — live now.";
-  // release the editing lock or the render guard keeps showing the OLD state
-  // (live bug: "Current:" card stayed on kimi after switching provider)
-  if(!r.error){ editing = false; modelCatalog = null; await refresh(); }
 }
 function markEditing(){ editing = true; }
 
@@ -240,15 +247,10 @@ async function switchModel(id, asGate){
   const st = (D && D.settings) || {};
   const msg = document.getElementById("free-switch-msg");
   if (msg) msg.textContent = "switching…";
-  const r = await postJSON("/api/settings", {
-    provider: st.provider,
-    model: asGate ? st.model : id,
-    small_model: asGate ? id : st.small_model,
-    keys: {},
-  });
+  const r = await applyModel({provider: st.provider,
+    model: asGate ? st.model : id, small_model: asGate ? id : st.small_model});
   if (msg) msg.textContent = r.error ? ("Error: " + r.error)
                                      : (asGate ? "Gate model is now " : "Model is now ") + id + ". Applies from your next message.";
-  if (!r.error){ editing = false; await refresh(); }
 }
 
 // "Your models" — the curated shortlist the chat pill shows, spanning every
@@ -375,22 +377,35 @@ const gateSplit = s => {
 
 // --- Chat gateway: type here, watch the harness run (turns kept in memory)
 const CHAT = [];
+// The gate → tools → reply stage strip, shared by the live card and the
+// completed/replayed card so the markup can't drift. `live` lights stages up
+// (gate flips to done once decided, reply "on" once text streams); otherwise
+// every stage is done and the strip carries the .tele class (hidden by the
+// stats toggle). (.stages is flexbox, so inter-span whitespace is irrelevant.)
+function stagesRow(t, live){
+  const gateCls = live ? (t.gate ? "done" : "on") : "done";
+  const replyCls = live ? (t.stream ? "on" : "") : "done";
+  const tools = (t.tools||[]).map(x => `<span class="stage done">tool · ${esc(x.tool)}</span>`).join("");
+  return `<div class="stages${live?"":" tele"}">`
+    + `<span class="stage ${gateCls}">gate${t.gate?` · ${esc(t.gate.decision)}`:""}</span>`
+    + tools + `<span class="stage ${replyCls}">reply</span></div>`;
+}
+// The per-turn telemetry footer: seconds · iterations · model · consolidation.
+const teleFooter = t => `<div class="meta tele">${secs(t.latency_ms)} · ${t.iterations??"?"} iter${
+  t.model?` · ${esc(t.model)}`:""}${t.consolidation?` · consolidated ${t.consolidation.new_facts} fact(s)`:""}</div>`;
+
 const chatTurnCard = t => `<div class="card">
-  ${t.gate?`<div class="stages tele"><span class="stage done">gate · ${esc(t.gate.decision)}</span>${(t.tools||[]).map(x=>`<span class="stage done">tool · ${esc(x.tool)}</span>`).join("")}<span class="stage done">reply</span></div>
+  ${t.gate?`${stagesRow(t, false)}
     <div class="meta tele" style="margin:0 0 6px">${esc(t.gate.reason||"")}</div>`:""}
   ${(t.tools||[]).length?`<div class="tele">${(t.tools||[]).map(toolRow).join("")}</div>`:""}
   <div class="r" style="margin-top:8px">${renderMarkdown(t.reply)}</div>
-  <div class="meta tele">${secs(t.latency_ms)} · ${t.iterations??"?"} iter${t.model?` · ${esc(t.model)}`:""}${t.consolidation?` · consolidated ${t.consolidation.new_facts} fact(s)`:""}</div>
+  ${teleFooter(t)}
 </div>`;
 
 // While a turn runs we stream it live: stages light up as the harness reaches
 // them, and the reply text appears token by token (with a blinking caret).
 const streamingCard = m => `<div class="card">
-  <div class="stages">
-    <span class="stage ${m.gate?"done":"on"}">gate${m.gate?` · ${esc(m.gate.decision)}`:""}</span>
-    ${(m.tools||[]).map(x=>`<span class="stage done">tool · ${esc(x.tool)}</span>`).join("")}
-    <span class="stage ${m.stream?"on":""}">reply</span>
-  </div>
+  ${stagesRow(m, true)}
   ${m.gate&&m.gate.reason?`<div class="meta" style="margin:0 0 6px">${esc(m.gate.reason)}</div>`:""}
   ${(m.tools||[]).map(toolRow).join("")}
   ${m.stream
@@ -629,13 +644,23 @@ async function newChat(){
   if (r.session_id){ liveView = null; SESSION = r.session_id; CHAT.length = 0; syncChatLogs(); }
   closeSessMenu();
 }
+// The ONE way to pull a thread's rows into the dock, so the paths can't drift
+// (they used to: some dropped meta, some added a length-guard, some didn't).
+//   mode 'switch'  -> action:switch, also moves the agent's active thread
+//   mode 'history' -> action:history, read-only ('__all__' = full timeline)
+// Replaces CHAT + repaints, unless `guard` is set and the length is unchanged
+// (the live-poll case, to avoid a needless redraw). Returns the items or null.
+async function loadThreadInto(id, {mode = "history", setSession = false, guard = false} = {}){
+  const r = await postJSON("/api/session", {action: mode, id});
+  if (!r.ok) return null;
+  const fresh = (r.history || []).map(histItem);
+  if (guard && fresh.length === CHAT.length) return fresh;   // unchanged -> skip repaint
+  if (setSession) SESSION = r.session_id;
+  CHAT.length = 0; fresh.forEach(m => CHAT.push(m)); syncChatLogs();
+  return fresh;
+}
 async function switchSession(id){
-  const r = await postJSON("/api/session", {action:"switch", id});
-  if (r.ok){
-    SESSION = r.session_id; CHAT.length = 0;
-    (r.history||[]).forEach(m => CHAT.push(histItem(m)));
-    syncChatLogs();
-  }
+  await loadThreadInto(id, {mode: "switch", setSession: true});
   closeSessMenu();
 }
 // Open a conversation from the Gateway inbox: load it into the dock (the active
@@ -657,19 +682,13 @@ async function viewAllHistory(){
   document.body.classList.remove("dock-closed");
   localStorage.setItem("dockClosed", "0");
   liveView = "__all__";
-  const r = await postJSON("/api/session", {action:"history", id:"__all__"});
-  if (r.ok){ CHAT.length = 0; (r.history||[]).map(histItem).forEach(m => CHAT.push(m)); syncChatLogs(); }
+  await loadThreadInto("__all__");
 }
 // Re-pull the opened conversation each refresh so incoming messages from another
 // gateway (your phone) show up live — unless a turn is mid-stream in the dock.
 async function syncLiveView(){
   if (!liveView || CHAT.some(m => m.pending)) return;
-  const r = await postJSON("/api/session", {action:"history", id:liveView});
-  if (!r.ok) return;
-  const fresh = (r.history||[]).map(histItem);
-  if (fresh.length !== CHAT.length){   // only redraw when it actually changed
-    CHAT.length = 0; fresh.forEach(m => CHAT.push(m)); syncChatLogs();
-  }
+  await loadThreadInto(liveView, {guard: true});   // guard: repaint only if changed
 }
 function closeSessMenu(){ const m=document.getElementById("sessmenu"); if(m) m.remove(); }
 function toggleSessMenu(ev){
@@ -757,12 +776,8 @@ async function switchTo(provider, model){
   const name = chip && chip.querySelector(".mc-name");
   closeModelMenu();
   if (name) name.textContent = "switching…";
-  const r = await postJSON("/api/settings", {
-    provider, model,
-    small_model: provider === st.provider ? st.small_model : "",
-    keys: {},
-  });
-  if (!r.error){ editing = false; modelCatalog = null; await refresh(); }
+  await applyModel({provider, model,
+    small_model: provider === st.provider ? st.small_model : ""});
 }
 // --- read-only SQL console (item: "a simple query editor like Supabase")
 function qFill(sql){ const b=document.getElementById("sqlbox"); if(b){ b.value=sql; runQuery(); } }
@@ -1253,12 +1268,7 @@ async function restoreDock(){
   dockRestored = true;
   const sid = D && D.current_session;
   if (!sid || CHAT.length) return;
-  SESSION = sid;
-  const r = await postJSON("/api/session", {action:"history", id:sid});
-  if (r.history && r.history.length && !CHAT.length){
-    r.history.forEach(m => CHAT.push(histItem(m)));
-    syncChatLogs();
-  }
+  await loadThreadInto(sid, {setSession: true});
 }
 async function refresh(){
   try {
