@@ -879,7 +879,11 @@ def list_models(provider: str | None = None) -> dict:
 
     cached = _models_cache.get(url)
     if cached and time.time() - cached[0] < 300:
-        return {**out, "listed": True, "models": cached[1]}
+        _ts, cmodels, cerr = cached          # cerr None on a real listing
+        r = {**out, "listed": cerr is None, "models": cmodels}
+        if cerr:
+            r["error"] = cerr
+        return r
     # Use this provider's own key; s.api_key only holds the ACTIVE provider's.
     key = (s.api_key if name == s.provider else "") or os.getenv(prov.key_env, "")
     # send both auth styles — Bearer for OpenAI-compatible catalogs, x-api-key +
@@ -892,10 +896,20 @@ def list_models(provider: str | None = None) -> dict:
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())
     except Exception as exc:
-        # cache the failure for ~1 minute so an unreachable catalog doesn't
-        # stall every 5-second dashboard poll for 10s
-        _models_cache[url] = (time.time() - 240, [])
-        return {**out, "listed": False, "models": [], "error": str(exc)}
+        # Surface the server's actual reason (e.g. xAI's 403 "no credits"), not
+        # just "HTTP Error 403" — an HTTPError carries the body on .read().
+        msg = str(exc)
+        try:
+            msg = f"{msg} — {exc.read().decode()[:160]}"
+        except Exception:
+            pass
+        # still offer the provider's known defaults so the picker isn't empty
+        known = [{"id": m} for m in dict.fromkeys([prov.model, prov.small_model]) if m]
+        # cache the failure (defaults + reason) for ~1 minute so an unreachable
+        # catalog doesn't stall every 5-second dashboard poll for 10s — and so a
+        # cache hit still shows the defaults and the reason, not a blank list.
+        _models_cache[url] = (time.time() - 240, known, msg)
+        return {**out, "listed": False, "models": known, "error": msg}
     models = []
     for m in data.get("data", []):
         mid = m.get("id", "")
@@ -922,7 +936,7 @@ def list_models(provider: str | None = None) -> dict:
             pass
         models.append(entry)
     models.sort(key=lambda x: (not x["free"], x["tools"] is False, x["id"]))
-    _models_cache[url] = (time.time(), models)
+    _models_cache[url] = (time.time(), models, None)   # None error = a real listing
     return {**out, "listed": True, "models": models}
 
 
