@@ -243,13 +243,20 @@ def compare_models(payload: dict) -> dict:
     return {"ok": True, "message": message, "results": results}
 
 
-def compare_stream(message: str, specs: list, emit) -> None:
+def compare_stream(message: str, specs: list, emit, log_calendar: bool = False) -> None:
     """Race the models and stream each one's harness LIVE — gate decision, tool
     calls, and reply tokens, per model — so every column plays out like the chat
     dock instead of a static 'racing…'. Contestants run in parallel threads that
     all write to one SSE socket, so emit() is serialized behind a lock. Each
     event is tagged with its `spec` so the browser routes it to the right column.
-    Isolated temp homes, same as the batch path."""
+    Isolated temp homes, same as the batch path.
+
+    log_calendar=True: the benchmark still runs in the sandbox, but for each model
+    that scheduled something, the HARNESS writes ONE real Apple Calendar event —
+    the model's title/time stamped with the model name and the REAL receipts
+    (seconds/tokens/$), which the model itself can't know (they're measured after
+    the turn). So a scheduling race leaves N differentiated events on your real
+    calendar. Off by default; it's an explicit opt-in that touches real data."""
     import tempfile
     import threading
     import time
@@ -257,12 +264,14 @@ def compare_stream(message: str, specs: list, emit) -> None:
 
     from waku.app import Waku
     from waku.config import Settings
+    from waku.tools.calendar import sync_to_apple_calendar
 
     if not message or not specs:
         emit("done", {"error": "message and models required"})
         return
 
     lock = threading.Lock()
+    cal_lock = threading.Lock()   # osascript to Apple Calendar — serialize writes
 
     def send(kind, ev):
         with lock:
@@ -303,12 +312,32 @@ def compare_stream(message: str, specs: list, emit) -> None:
                     except json.JSONDecodeError:
                         pass
             pin, pout = price_for(provider, settings.model)
+            cost = round(tin / 1e6 * pin + tout / 1e6 * pout, 4)
+            # Opt-in: stamp this model's REAL receipts onto its scheduled event
+            # and write it to your actual Apple Calendar (the model can't self-
+            # report seconds/tokens/$ — the harness measured them just now).
+            logged = None
+            if log_calendar:
+                ce = next((c for c in result.tool_calls if c["tool"] == "create_event"), None)
+                if ce and ce.get("args", {}).get("start"):
+                    a = ce["args"]
+                    stamp = f"{settings.model} · {ms/1000:.0f}s · {tin+tout} tok · ${cost:.4f}"
+                    title = f"{a.get('title', 'Event')} [{stamp}]"
+                    notes = (f"Scheduled by {settings.model} via Waku Compare. "
+                             f"{result.iterations} iterations, {ms} ms, "
+                             f"{tin} in / {tout} out tokens, est ${cost:.4f}.")
+                    try:
+                        with cal_lock:
+                            sync_to_apple_calendar(title, a["start"], a.get("end") or a["start"], notes)
+                        logged = title
+                    except Exception as exc:
+                        logged = f"calendar write failed: {str(exc)[:80]}"
             send("result", {"spec": spec, "provider": provider, "model": settings.model,
                             "reply": result.reply, "gate": (gate or None),
                             "iterations": result.iterations, "latency_ms": ms,
                             "tools": [{"tool": c["tool"]} for c in result.tool_calls],
-                            "tokens_in": tin, "tokens_out": tout,
-                            "cost_usd": round(tin / 1e6 * pin + tout / 1e6 * pout, 4)})
+                            "tokens_in": tin, "tokens_out": tout, "cost_usd": cost,
+                            "logged": logged})
         except Exception as exc:
             send("result", {"spec": spec, "provider": provider, "model": model, "error": str(exc)[:200]})
 
@@ -1292,7 +1321,8 @@ class Handler(BaseHTTPRequestHandler):
                 except (BrokenPipeError, ConnectionResetError):
                     pass
             try:
-                compare_stream((payload.get("message") or "").strip(), payload.get("models") or [], emit)
+                compare_stream((payload.get("message") or "").strip(), payload.get("models") or [], emit,
+                               log_calendar=bool(payload.get("log_calendar")))
             except Exception as exc:
                 emit("done", {"error": f"{type(exc).__name__}: {exc}"})
             return

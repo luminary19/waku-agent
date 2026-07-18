@@ -59,7 +59,8 @@ async function runCompare(){
   try {
     const res = await fetch("/api/compare/stream", {method:"POST",
       headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({message: compareState.message, models: specs})});
+      body: JSON.stringify({message: compareState.message, models: specs,
+                            log_calendar: !!compareState.logCalendar})});
     const reader = res.body.getReader(), dec = new TextDecoder();
     let buf = "";
     for(;;){
@@ -114,6 +115,7 @@ function compareCol(res){
       <span class="chip">${(res.tokens_in||0)+(res.tokens_out||0)} tok</span>
     </div>
     ${tools?`<div class="stages" style="flex-wrap:wrap">${tools}</div>`:""}
+    ${res.logged?`<div class="meta" style="color:var(--good)">added to your calendar: ${esc(res.logged)}</div>`:""}
     <div class="r cmp-reply">${renderMarkdown(res.reply||"")}</div>
   </div>`;
 }
@@ -167,9 +169,12 @@ VIEWS.compare = function(d){
     <textarea id="cmp-msg" class="cmp-input" rows="2" onfocus="markEditing()"
       oninput="compareState.message=this.value">${esc(compareState.message)}</textarea>
     <div class="cmp-picks">${chips}</div>
-    <div style="margin-top:10px">
+    <div style="margin-top:10px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
       <button class="save" onclick="runCompare()" ${(!n||compareState.running)?"disabled":""}>
         ${compareState.running?"Racing…":`Race ${n} model${n===1?"":"s"}`}</button>
+      <label class="cmp-pick ${compareState.logCalendar?"on":""}" title="For a scheduling task, write each model's event to your real Apple Calendar, stamped with its model + real seconds/tokens/$">
+        <input type="checkbox" ${compareState.logCalendar?"checked":""}
+          onchange="compareState.logCalendar=this.checked;editing=false;render()"> write results to my calendar</label>
     </div>
   </div>${grid}`;
 };
