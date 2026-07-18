@@ -270,12 +270,15 @@ function boardAggregate(){
       const r = (compareState.results || {})[spec];
       if (!r || r.streaming) return;   // column not finished yet
       const a = map[spec] || (map[spec] = {spec, provider: r.provider, model: r.model,
-        runs: 0, ok: 0, total_latency_ms: 0, total_tokens: 0, total_cost_usd: 0});
+        runs: 0, ok: 0, total_latency_ms: 0, total_tokens_in: 0, total_tokens_out: 0,
+        total_tokens: 0, total_cost_usd: 0});
       a.runs += 1;
       if (!r.error){
         a.ok += 1;
         a.total_latency_ms += r.latency_ms || 0;
-        a.total_tokens += (r.tokens_in || 0) + (r.tokens_out || 0);
+        a.total_tokens_in += r.tokens_in || 0;
+        a.total_tokens_out += r.tokens_out || 0;
+        a.total_tokens = a.total_tokens_in + a.total_tokens_out;
         a.total_cost_usd = Math.round((a.total_cost_usd + (r.cost_usd || 0)) * 10000) / 10000;
       }
     });
@@ -298,11 +301,13 @@ function compareHistoryHtml(){
       <span class="meta" style="font-weight:400">— totals across ${raceCount} race${raceCount===1?"":"s"}</span>
       <a class="reveal" style="margin-left:auto;font-size:12px" onclick="clearCompareHistory()">clear</a></h2>
     <div class="card" style="padding:4px 8px"><table>
-      <tr><th>model</th>${th("runs","races")}<th>ok</th>${th("total_latency_ms","total time")}${th("total_tokens","total tokens")}<th title="list price per million tokens, input / output">rate $/M</th>${th("total_cost_usd","total cost")}</tr>
+      <tr><th>model</th>${th("runs","races")}<th>ok</th>${th("total_latency_ms","total time")}${th("total_tokens_in","in tok")}${th("total_tokens_out","out tok")}${th("total_tokens","total tok")}<th title="list price per million tokens, input / output">rate $/M</th>${th("total_cost_usd","total cost")}</tr>
       ${rows.map(a=>`<tr>
         <td><span class="mm-prov">${esc(a.provider)}</span> <code>${esc(a.model)}</code></td>
         <td class="meta">${a.runs}</td><td class="meta">${a.ok}/${a.runs}</td>
-        <td class="meta">${secs(a.total_latency_ms)}</td><td class="meta">${a.total_tokens}</td>
+        <td class="meta">${secs(a.total_latency_ms)}</td>
+        <td class="meta">${a.total_tokens_in}</td><td class="meta">${a.total_tokens_out}</td>
+        <td class="meta">${a.total_tokens}</td>
         <td class="meta">${a.rate_in!=null?`$${a.rate_in}/$${a.rate_out}`:"—"}</td>
         <td class="meta" style="color:var(--good)">${money(a.total_cost_usd)}</td></tr>`).join("")}
     </table></div>` : "";
