@@ -246,7 +246,7 @@ def compare_models(payload: dict) -> dict:
 
 
 def compare_stream(message: str, specs: list, emit, judge: bool = False,
-                   coding: bool = False, judge_spec: str = "") -> None:
+                   coding: bool = False, judge_spec: str = "", apple: bool = False) -> None:
     """Race the models and stream each one's harness LIVE — gate decision and
     tool calls, per model — so every column plays out like the chat dock instead
     of a static 'racing…'. Each contestant runs the REAL loop (tools included) in
@@ -301,8 +301,10 @@ def compare_stream(message: str, specs: list, emit, judge: bool = False,
             # coding mode registers delegate_task (the pi sub-agent) so the loop
             # can hand real programming work to pi — running the FULL harness
             # (gate, memory, tools), not a bypass. pi runs on this card's model.
+            # apple_calendar defaults OFF (isolation), opt-in per race — when on,
+            # EACH model writes its own event to the real 'Waku' calendar.
             settings = Settings(provider=provider, model=model, small_model="",
-                                home=home, apple_calendar=False, experimental=coding)
+                                home=home, apple_calendar=apple, experimental=coding)
             app = Waku(settings=settings)
             # A scored case may pre-load a fact (e.g. "applies memory") so every
             # model starts from the same state the checklist assumes.
@@ -1424,7 +1426,7 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 compare_stream((payload.get("message") or "").strip(), payload.get("models") or [],
                                emit, judge=bool(payload.get("judge")), coding=bool(payload.get("coding")),
-                               judge_spec=(payload.get("judge_model") or ""))
+                               judge_spec=(payload.get("judge_model") or ""), apple=bool(payload.get("apple")))
             except Exception as exc:
                 emit("done", {"error": f"{type(exc).__name__}: {exc}"})
             return

@@ -109,6 +109,14 @@ function toggleCoding(){
   editing = false;
   render();
 }
+// Write to the real Apple Calendar ('Waku' calendar), opt-in. OFF by default so
+// a race doesn't spam duplicates — when ON, EVERY racing model writes its own
+// event (one per model). Use with 1-2 models to demo the real integration.
+function toggleApple(){
+  compareState.apple = !compareState.apple;
+  editing = false;
+  render();
+}
 // Who grades quality. Deliberately NOT a racing model by default — a contestant
 // can't fairly judge its own round. gpt-5.6-sol is a strong text judge that
 // makes a poor tool-calling contestant, so it's the natural neutral referee.
@@ -138,7 +146,8 @@ async function runCompare(){
     const res = await fetch("/api/compare/stream", {method:"POST",
       headers:{"Content-Type":"application/json"},
       body: JSON.stringify({message: compareState.message, models: specs, judge: !!compareState.judge,
-        judge_model: compareState.judgeModel || "openai:gpt-5.6-sol", coding: !!compareState.coding})});
+        judge_model: compareState.judgeModel || "openai:gpt-5.6-sol", coding: !!compareState.coding,
+        apple: !!compareState.apple})});
     const reader = res.body.getReader(), dec = new TextDecoder();
     let buf = "";
     for(;;){
@@ -291,7 +300,9 @@ VIEWS.compare = function(d){
   return `<div class="card">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
       <span class="meta">One message, every brain at once — same harness, isolated homes, real receipts (gate · latency · cost · tools). Compare, don't guess.</span>
-      <label class="cmp-judge ${compareState.coding?"on":""}" style="margin-left:auto" title="Coding task: enables the delegate_task tool so the loop can hand real coding work to a pi sub-agent on this card's own model — the full harness runs (gate, tools), delegate_task is one of them">
+      <label class="cmp-judge ${compareState.apple?"on":""}" style="margin-left:auto" title="Write create_event results to your REAL Apple Calendar (the 'Waku' calendar). Off by default so a race doesn't spam duplicates — when on, EACH model writes its own event (use 1-2 models).">
+        <input type="checkbox" ${compareState.apple?"checked":""} onchange="toggleApple()"> write to calendar</label>
+      <label class="cmp-judge ${compareState.coding?"on":""}" title="Coding task: enables the delegate_task tool so the loop can hand real coding work to a pi sub-agent on this card's own model — the full harness runs (gate, tools), delegate_task is one of them">
         <input type="checkbox" ${compareState.coding?"checked":""} onchange="toggleCoding()"> coding (pi)</label>
       <label class="cmp-judge ${compareState.judge?"on":""}" title="Grade each reply 0-10 for how well it serves the request (correctness, honesty, concision). One extra API call per column, by a referee that isn't racing.">
         <input type="checkbox" ${compareState.judge?"checked":""} onchange="toggleJudge()"> grade &mdash; referee
