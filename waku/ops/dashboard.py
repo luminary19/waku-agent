@@ -410,11 +410,14 @@ def compare_regrade(payload: dict) -> dict:
         return {"runs": [], "aggregate": []}
     jp, _, jm = (payload.get("judge_model") or "").partition(":")
     only_missing = payload.get("only_missing", True)
+    spec = payload.get("spec")   # grade just ONE card (the per-card button)
     last = runs[-1]
     for r in last.get("results", []):
         if r.get("error") or not (r.get("reply") or "").strip():
             continue
-        if only_missing and r.get("quality") is not None:
+        if spec is not None and r.get("spec") != spec:
+            continue
+        if spec is None and only_missing and r.get("quality") is not None:
             continue
         q = judge_mod.judge_reply(last.get("message", ""), r["reply"], jp or None, jm or None,
                                   tools=r.get("tools"))   # history stores tools as [names]

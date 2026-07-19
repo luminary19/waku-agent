@@ -67,6 +67,22 @@ async function regradeCompare(){
   } catch(e){ compareState.raceError = "re-grade failed: " + e; }
   compareState.regrading = false; editing = false; render();
 }
+// Grade ONE card — the referee sometimes 429-skips a single model. Grades just
+// this spec in the latest run, updates its badge + the scoreboard.
+async function gradeCard(spec){
+  const R = compareState.results || {};
+  if (!R[spec] || R[spec]._grading) return;
+  R[spec]._grading = true; editing = false; render();
+  try {
+    const r = await postJSON("/api/compare/regrade",
+      {spec, judge_model: compareState.judgeModel || "openai:gpt-5.6-sol"});
+    compareState.history = r.runs || []; compareState.aggregate = r.aggregate || [];
+    const row = ((r.runs || [])[0] || {}).results?.find(x => x.spec === spec);
+    if (row && R[spec]) R[spec].quality = row.quality;
+  } catch(e){ compareState.raceError = "grade failed: " + e; }
+  if (R[spec]) R[spec]._grading = false;
+  editing = false; render();
+}
 // Delete ONE race from the scoreboard (its models leave the totals), leaving
 // every other race intact — vs "clear all" which wipes the whole history.
 async function deleteCompareRun(ts){
@@ -248,8 +264,10 @@ function compareCol(res){
   const completionBadge = c ? `<span class="cmp-score ${c.passed?"pass":"fail"}" title="${esc(c.why||"")}">${c.passed?"solved":"failed"}${c.passed?"":" · "+esc(c.why||"")}</span>` : "";
   const q = res.quality;
   const qualityBadge = q && q.score!=null ? `<span class="cmp-q ${q.score>=7?"hi":q.score>=4?"mid":"lo"}" title="graded ${q.score}/10 by ${esc(q.judge||"referee")} — ${esc(q.reason||"")}">${q.score}/10</span>` : "";
+  // per-card grade button — grade just this card if the referee skipped it (429)
+  const gradeBtn = `<a class="reveal cmp-grade1" title="grade this card with the referee" onclick="gradeCard('${esc(res.spec)}')">${res._grading?"grading…":(q&&q.score!=null?"re-grade":"grade")}</a>`;
   return `<div class="cmp-col${c?(c.passed?" solved":" failed"):""}">
-    <div class="cmp-h"><span class="mm-prov">${esc(res.provider)}</span> <code>${esc(res.model)}</code>${completionBadge}${qualityBadge}</div>
+    <div class="cmp-h"><span class="mm-prov">${esc(res.provider)}</span> <code>${esc(res.model)}</code>${completionBadge}${qualityBadge}${gradeBtn}</div>
     <div class="cmp-stats">
       ${gateBadgeHtml}
       <span class="chip ${compareState.sortBy==="latency"?"sorted":""}">${secs(res.latency_ms)}</span>
