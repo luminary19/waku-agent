@@ -424,6 +424,16 @@ def compare_regrade(payload: dict) -> dict:
     return _compare_history_response(runs)
 
 
+def compare_delete_run(payload: dict) -> dict:
+    """Delete ONE race (by timestamp) from the scoreboard — its models drop out of
+    the totals — leaving every other race intact. Returns the refreshed history."""
+    home = load_settings().home
+    ts = payload.get("ts")
+    runs = [r for r in compare_history.load_runs(home) if r.get("ts") != ts]
+    compare_history.save_runs(home, runs)
+    return _compare_history_response(runs)
+
+
 # Rough $/million tokens (in, out) for a dollar ESTIMATE — the number humans
 # actually feel. Keyed by provider; deliberately approximate and labelled "est".
 PRICING = {
@@ -1458,7 +1468,7 @@ class Handler(BaseHTTPRequestHandler):
         routes = {"/api/chat": None, "/api/memory": memory_action, "/api/settings": apply_settings,
                   "/api/query": run_query, "/api/session": session_action, "/api/pin": pin_action,
                   "/api/compare": compare_models, "/api/compare/clear": compare_clear,
-                  "/api/compare/regrade": compare_regrade}
+                  "/api/compare/regrade": compare_regrade, "/api/compare/delete_run": compare_delete_run}
         if self.path not in routes:
             self.send_response(404)
             self.end_headers()

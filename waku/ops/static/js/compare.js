@@ -67,6 +67,16 @@ async function regradeCompare(){
   } catch(e){ compareState.raceError = "re-grade failed: " + e; }
   compareState.regrading = false; editing = false; render();
 }
+// Delete ONE race from the scoreboard (its models leave the totals), leaving
+// every other race intact — vs "clear all" which wipes the whole history.
+async function deleteCompareRun(ts){
+  if (!ts || !confirm("Delete just this run from the scoreboard? (Other races stay.)")) return;
+  try {
+    const r = await postJSON("/api/compare/delete_run", {ts});
+    compareState.history = r.runs || []; compareState.aggregate = r.aggregate || [];
+  } catch(e){ compareState.raceError = "delete failed: " + e; }
+  editing = false; render();
+}
 // Dismiss the race CARDS (the per-model columns) only — the cumulative
 // scoreboard/history is left alone. Handy for a clean slate before the next race.
 function clearCards(){
@@ -277,13 +287,17 @@ VIEWS.compare = function(d){
                      tokens:  r => (r.tokens_in || 0) + (r.tokens_out || 0) };
     const key = metric[compareState.sortBy] || metric.latency;
     const sorters = [["latency", "seconds"], ["tokens", "tokens"], ["cost", "money"]];
-    // "clear cards" dismisses the columns only (scoreboard/history untouched).
+    // Right of the sort tabs, above the cards: "re-grade run" re-runs the referee
+    // on every model in THIS run (the cards below); "clear cards" just dismisses
+    // the columns. Both act on the current run.
+    const regradeBtn = (done.length && !compareState.running)
+      ? `<a class="reveal" style="margin-left:auto;font-size:12px" title="Re-run the referee on every model in this run (fills a skipped/429'd grade, or re-scores)" onclick="regradeCompare()">${compareState.regrading?"re-grading…":"re-grade run"}</a>` : "";
     const clearBtn = (order.length && !compareState.running)
-      ? `<a class="reveal" style="margin-left:auto;font-size:12px" onclick="clearCards()">clear cards</a>` : "";
+      ? `<a class="reveal" style="${regradeBtn?"":"margin-left:auto;"}font-size:12px" onclick="clearCards()">clear cards</a>` : "";
     // Prominent, tab-like sort buttons — the selected one is highlighted.
     const sortBar = (done.length || clearBtn) ? `<div class="cmp-sortbar">${done.length
       ? `sort by ${sorters.map(([k, label]) => `<button class="cmp-sortbtn ${compareState.sortBy === k ? "on" : ""}" onclick="setCompareSort('${k}')">${label}</button>`).join("")}`
-      : ""}${clearBtn}</div>` : "";
+      : ""}${regradeBtn}${clearBtn}</div>` : "";
     // Only a progress line while the race is still running; once every column is
     // in, the sort tabs + cards + scoreboard say it all (no redundant summary).
     const g = compareState.grading;
@@ -444,8 +458,7 @@ function compareHistoryHtml(){
   const scoreboard = agg.length ? `
     <h2 style="margin-top:22px;display:flex;align-items:center;gap:10px">Scoreboard
       <span class="meta" style="font-weight:400">— totals across ${raceCount} race${raceCount===1?"":"s"}</span>
-      <a class="reveal" style="margin-left:auto;font-size:12px" title="Re-run the referee on every model in THIS (latest) run only — not past races. Use if a grade was skipped/429'd, or to re-score." onclick="regradeCompare()">${compareState.regrading?"re-grading…":"re-grade run"}</a>
-      <a class="reveal" style="font-size:12px" onclick="clearCompareHistory()">clear</a></h2>
+      <a class="reveal" style="margin-left:auto;font-size:12px" onclick="clearCompareHistory()">clear all</a></h2>
     ${costQualityScatter(agg)}
     <div class="card" style="padding:4px 8px"><table>
       <tr><th>model</th>${th("cases_passed","solved")}<th class="cmp-th ${bs.key==="quality_avg"?"on":""}" onclick="setBoardSort('quality_avg')" title="referee's mean 0-10 grade on the replies (correctness, honesty, concision) — referee is not a racing model">grade${arrow("quality_avg")}</th>${th("runs","races")}<th>ok</th>${th("total_latency_ms","total time")}${th("total_tokens_in","in tok")}${th("total_tokens_out","out tok")}${th("total_tokens","total tok")}<th title="list price per million tokens, input / output">rate $/M</th>${th("total_cost_usd","total cost")}</tr>
@@ -466,6 +479,7 @@ function compareHistoryHtml(){
       <div class="pinrow" style="cursor:pointer" onclick="openCompareRun(${i})">
         <code style="flex:1;word-break:break-all">${esc((run.message||"").slice(0,90))}</code>
         <span class="meta" style="white-space:nowrap">${(run.results||[]).length} models · ${esc((run.ts||"").slice(0,16).replace("T"," "))}</span>
+        <a class="reveal del" style="margin-left:8px;font-size:14px" title="delete just this run" onclick="event.stopPropagation(); deleteCompareRun('${esc(run.ts||"")}')">×</a>
       </div>`).join("")}</div>` : "";
   return scoreboard + recent;
 }
