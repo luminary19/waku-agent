@@ -354,10 +354,11 @@
     border:1px solid var(--line);border-radius:6px;padding:1px 4px;margin-left:2px;cursor:pointer}
   .cmp-judge select:disabled{opacity:.5;cursor:default}
   .scatter{width:100%;height:auto;display:block}
+  .scatter text{font-family:inherit}   /* match the page's sans, not SVG's default serif */
   .scatter .sc-axis{stroke:var(--line);stroke-width:1}
   .scatter .sc-grid{stroke:var(--line);stroke-width:1;opacity:.4}
   .scatter .sc-tick{fill:var(--ink3);font-size:10px}
-  .scatter .sc-lbl{fill:var(--ink2);font-size:10.5px;font-family:var(--mono)}
+  .scatter .sc-lbl{fill:var(--ink2);font-size:10.5px}
   .scatter .sc-dot.hi{fill:var(--good)}
   .scatter .sc-dot.mid{fill:#c8951f}
   .scatter .sc-dot.lo{fill:var(--bad)}
