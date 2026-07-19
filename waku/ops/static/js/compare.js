@@ -10,7 +10,9 @@
 // localStorage — tab switches and full reloads, so a finished race isn't lost.
 // Kept out of the chat log on purpose: a benchmark isn't a conversation.
 let compareState = { message: "Build a Kanto team around Pikachu — search current picks, remember it, and schedule two training sessions this week.",
-                     picked: null, running: false, results: null, order: null, sortBy: "latency" };
+                     picked: null, running: false, results: null, order: null, sortBy: "latency",
+                     // grade every race by default, with a neutral (non-racing) referee
+                     judge: true, judgeModel: "openai:gpt-5.6-sol" };
 try {
   const saved = JSON.parse(localStorage.getItem("waku_compare") || "null");
   if (saved){ compareState.message = saved.message ?? compareState.message;
