@@ -50,6 +50,23 @@ async function clearCompareHistory(){
   compareState.history = r.runs || []; compareState.aggregate = r.aggregate || [];
   editing = false; render();
 }
+// Re-run the referee on the most recent race for any models it skipped (429'd).
+// Updates the stored history + the visible cards. only_missing keeps already-
+// graded models untouched.
+async function regradeCompare(){
+  if (compareState.regrading) return;
+  compareState.regrading = true; editing = false; render();
+  try {
+    const r = await postJSON("/api/compare/regrade",
+      {judge_model: compareState.judgeModel || "openai:gpt-5.6-sol", only_missing: true});
+    compareState.history = r.runs || []; compareState.aggregate = r.aggregate || [];
+    const last = (r.runs || [])[0];
+    if (last && compareState.results){
+      last.results.forEach(x => { if (compareState.results[x.spec]) compareState.results[x.spec].quality = x.quality; });
+    }
+  } catch(e){ compareState.raceError = "re-grade failed: " + e; }
+  compareState.regrading = false; editing = false; render();
+}
 // Dismiss the race CARDS (the per-model columns) only — the cumulative
 // scoreboard/history is left alone. Handy for a clean slate before the next race.
 function clearCards(){
@@ -427,7 +444,8 @@ function compareHistoryHtml(){
   const scoreboard = agg.length ? `
     <h2 style="margin-top:22px;display:flex;align-items:center;gap:10px">Scoreboard
       <span class="meta" style="font-weight:400">— totals across ${raceCount} race${raceCount===1?"":"s"}</span>
-      <a class="reveal" style="margin-left:auto;font-size:12px" onclick="clearCompareHistory()">clear</a></h2>
+      ${agg.some(a => a.quality_avg == null && a.ok) ? `<a class="reveal" style="margin-left:auto;font-size:12px" title="grade any models the referee skipped (429) in the latest race" onclick="regradeCompare()">${compareState.regrading?"re-grading…":"re-grade"}</a>` : ""}
+      <a class="reveal" style="${agg.some(a => a.quality_avg == null && a.ok)?"":"margin-left:auto;"}font-size:12px" onclick="clearCompareHistory()">clear</a></h2>
     ${costQualityScatter(agg)}
     <div class="card" style="padding:4px 8px"><table>
       <tr><th>model</th>${th("cases_passed","solved")}<th class="cmp-th ${bs.key==="quality_avg"?"on":""}" onclick="setBoardSort('quality_avg')" title="referee's mean 0-10 grade on the replies (correctness, honesty, concision) — referee is not a racing model">grade${arrow("quality_avg")}</th>${th("runs","races")}<th>ok</th>${th("total_latency_ms","total time")}${th("total_tokens_in","in tok")}${th("total_tokens_out","out tok")}${th("total_tokens","total tok")}<th title="list price per million tokens, input / output">rate $/M</th>${th("total_cost_usd","total cost")}</tr>

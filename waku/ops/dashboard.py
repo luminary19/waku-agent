@@ -382,6 +382,48 @@ def compare_clear(payload: dict) -> dict:
     return {"ok": True, "runs": [], "aggregate": []}
 
 
+def _compare_history_response(runs: list[dict]) -> dict:
+    """Reprice each stored result from its tokens with the CURRENT price table (so
+    a pricing fix corrects past races), aggregate, and tag each row with the rate.
+    The shared shape returned by /api/compare/history and the re-grade endpoint."""
+    for run in runs:
+        for r in run.get("results", []):
+            if r.get("error"):
+                continue
+            pin, pout = price_for(r.get("provider", ""), r.get("model", ""))
+            r["cost_usd"] = round((r.get("tokens_in") or 0) / 1e6 * pin
+                                  + (r.get("tokens_out") or 0) / 1e6 * pout, 4)
+    agg = compare_history.aggregate(runs)
+    for row in agg:
+        row["rate_in"], row["rate_out"] = price_for(row["provider"], row["model"])
+    return {"runs": runs[-20:][::-1], "aggregate": agg}
+
+
+def compare_regrade(payload: dict) -> dict:
+    """Re-run the referee on the most recent race — for models the grader skipped
+    (429'd) the first time. `only_missing` (default true) grades only the ungraded
+    ones; pass false to re-grade everyone. Returns the refreshed history +
+    scoreboard, same shape as /api/compare/history."""
+    home = load_settings().home
+    runs = compare_history.load_runs(home)
+    if not runs:
+        return {"runs": [], "aggregate": []}
+    jp, _, jm = (payload.get("judge_model") or "").partition(":")
+    only_missing = payload.get("only_missing", True)
+    last = runs[-1]
+    for r in last.get("results", []):
+        if r.get("error") or not (r.get("reply") or "").strip():
+            continue
+        if only_missing and r.get("quality") is not None:
+            continue
+        q = judge_mod.judge_reply(last.get("message", ""), r["reply"], jp or None, jm or None,
+                                  tools=r.get("tools"))   # history stores tools as [names]
+        if q is not None:
+            r["quality"] = q
+    compare_history.save_runs(home, runs)
+    return _compare_history_response(runs)
+
+
 # Rough $/million tokens (in, out) for a dollar ESTIMATE — the number humans
 # actually feel. Keyed by provider; deliberately approximate and labelled "est".
 PRICING = {
@@ -1327,25 +1369,8 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/api/data":
             self._send(json.dumps(collect(), default=str).encode(), "application/json")
         elif self.path == "/api/compare/history":
-            home = load_settings().home
-            runs = compare_history.load_runs(home)
-            # Reprice every stored result from its tokens with the CURRENT price
-            # table, the way usage_summary repricing works — so a pricing fix
-            # corrects past races too, instead of leaving stale $ baked in at
-            # write time. The store keeps raw tokens for exactly this reason.
-            for run in runs:
-                for r in run.get("results", []):
-                    if r.get("error"):
-                        continue
-                    pin, pout = price_for(r.get("provider", ""), r.get("model", ""))
-                    r["cost_usd"] = round((r.get("tokens_in") or 0) / 1e6 * pin
-                                          + (r.get("tokens_out") or 0) / 1e6 * pout, 4)
-            agg = compare_history.aggregate(runs)
-            for row in agg:   # label each row with the rate the cost was computed at
-                row["rate_in"], row["rate_out"] = price_for(row["provider"], row["model"])
-            self._send(json.dumps({"runs": runs[-20:][::-1],   # newest first for display
-                                   "aggregate": agg}).encode(),
-                       "application/json")
+            runs = compare_history.load_runs(load_settings().home)
+            self._send(json.dumps(_compare_history_response(runs)).encode(), "application/json")
         elif self.path.startswith("/api/models"):
             from urllib.parse import parse_qs, urlparse
 
@@ -1432,7 +1457,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         routes = {"/api/chat": None, "/api/memory": memory_action, "/api/settings": apply_settings,
                   "/api/query": run_query, "/api/session": session_action, "/api/pin": pin_action,
-                  "/api/compare": compare_models, "/api/compare/clear": compare_clear}
+                  "/api/compare": compare_models, "/api/compare/clear": compare_clear,
+                  "/api/compare/regrade": compare_regrade}
         if self.path not in routes:
             self.send_response(404)
             self.end_headers()
